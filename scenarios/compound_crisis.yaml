@@ -1,0 +1,111 @@
+# ═══════════════════════════════════════════════════════════
+# 시나리오: 복합 위기 (Compound Crisis)
+# 설비 열화 + 품질 저하 + 수요 폭증 + 자재 부족이 동시에 발생.
+# 최악의 상황에서 Multi-Agent 시스템의 종합적 대응력을 테스트.
+# ═══════════════════════════════════════════════════════════
+name: "복합 위기 (Compound Crisis)"
+description: "설비 고장 + 품질 위기 + 수요 폭증 + 자재 부족이 동시에 발생하는 극한 시나리오."
+
+sensors:
+  press:
+    vibration:
+      baseline: 2.80
+      noise_std: 0.45
+      drift_rate: 0.35
+    oil_temp:
+      baseline: 50.0
+      noise_std: 1.5
+      drift_rate: 0.10
+    hydraulic_pressure:
+      baseline: 172.0
+      noise_std: 5.0
+      drift_rate: -0.25
+    motor_current:
+      baseline: 50.0
+      noise_std: 2.5
+      drift_rate: 0.06
+  weld:
+    weld_current:
+      baseline: 265.0
+      noise_std: 15.0
+      drift_rate: 0.08
+    weld_voltage:
+      baseline: 26.5
+      noise_std: 1.0
+      drift_rate: 0.03
+    wire_feed:
+      baseline: 11.0
+      noise_std: 0.6
+      drift_rate: -0.02
+    gas_flow:
+      baseline: 15.0
+      noise_std: 1.5
+      drift_rate: -0.03
+
+warehouse:
+  stock: 40
+  safety_stock: 55
+  service_level_target: 0.95
+  demand_std: 18.0
+  leadtime_mean: 6.0
+  leadtime_std: 3.5
+  avg_demand_per_cycle: 8.0
+
+materials:
+  steel_stock: 200
+  weld_wire: 3.0
+  shield_gas: 30.0
+  restock_threshold: 100
+
+demand:
+  shipment_interval: 1
+  shipment_batch_size: 6
+  order_quantities: [100, 150, 200, 300, 500]
+  initial_orders:
+    - order_id: "CO-001"
+      customer: "현대자동차"
+      quantity: 1000
+      due_date: "2026-04-04"
+      priority: "URGENT"
+    - order_id: "CO-002"
+      customer: "기아자동차"
+      quantity: 800
+      due_date: "2026-04-04"
+      priority: "URGENT"
+    - order_id: "CO-003"
+      customer: "GM Korea"
+      quantity: 500
+      due_date: "2026-04-05"
+      priority: "NORMAL"
+    - order_id: "CO-004"
+      customer: "르노코리아"
+      quantity: 400
+      due_date: "2026-04-05"
+      priority: "URGENT"
+
+events:
+  new_order: 0.25
+  vibration_spike: 0.25
+  equipment_stabilize: 0.03
+  material_arrival: 0.05
+  agv_change: 0.15
+  speed_recovery: 0.02
+  drift_recovery_prob: 0.02
+  drift_spike_prob: 0.20
+  urgent_order_ratio: 0.70
+  spike_magnitude: [0.8, 2.5]
+
+runtime:
+  takt_sec: 2.0
+  summary_interval: 10
+  event_interval_range: [4, 12]
+  agent_intervals:
+    EA: 1.5
+    QA: 2.0
+    SA: 3.0
+    DA: 2.5
+    IA: 2.0
+    PA: 1.5
+
+execution:
+  max_cycles: 100

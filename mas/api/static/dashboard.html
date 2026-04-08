@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MAS 공장 모니터링</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+:root{
+  --bg:#080a0e;--surface:#12151c;--card:#181c26;--border:#2a2f3a;--border-hi:#3d4454;
+  --text:#eceef2;--sub:#9aa3b2;--dim:#6b7280;
+  --blue:#3b82f6;--green:#10b981;--yellow:#f59e0b;--red:#ef4444;
+  --purple:#a855f7;--cyan:#22d3ee;--indigo:#6366f1;
+  --radius:16px;--radius-sm:10px;
+  --shadow:0 4px 24px rgba(0,0,0,.35);--shadow-sm:0 1px 0 rgba(255,255,255,.04) inset;
+}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,'Pretendard','Noto Sans KR',sans-serif;font-size:14px;line-height:1.55;overflow-x:hidden;min-height:100vh;
+  background-image:radial-gradient(ellipse 120% 80% at 50% -20%,rgba(59,130,246,.12),transparent 55%),radial-gradient(ellipse 80% 50% at 100% 50%,rgba(99,102,241,.06),transparent 50%);
+}
+body.app-body{margin:0}
+.app-shell{display:flex;min-height:100vh;align-items:stretch}
+.app-sidebar{width:232px;flex-shrink:0;background:linear-gradient(180deg,rgba(24,28,38,.96),rgba(10,12,16,.99));border-right:1px solid var(--border);padding:18px 0 20px;display:flex;flex-direction:column;position:sticky;top:0;align-self:flex-start;height:100vh;overflow-y:auto;z-index:30}
+.app-brand{display:flex;align-items:center;gap:11px;padding:0 16px 18px;border-bottom:1px solid var(--border);margin-bottom:14px}
+.app-brand-mark{font-size:12px;font-weight:800;letter-spacing:.1em;color:var(--cyan);background:rgba(34,211,238,.1);padding:6px 9px;border-radius:8px;border:1px solid rgba(34,211,238,.22)}
+.app-brand-text{display:flex;flex-direction:column;gap:1px}
+.app-brand-title{font-size:13px;font-weight:750;color:var(--text)}
+.app-brand-sub{font-size:10px;color:var(--dim);letter-spacing:.02em}
+.app-nav{display:flex;flex-direction:column;gap:3px;padding:0 10px}
+.app-nav__link{display:block;padding:9px 11px;border-radius:10px;font-size:12.5px;font-weight:650;color:var(--sub);text-decoration:none;border:1px solid transparent;transition:background .15s,color .15s,border-color .15s}
+.app-nav__link:hover{color:var(--text);background:rgba(255,255,255,.04)}
+.app-nav__link--accent{color:var(--cyan);border-color:rgba(34,211,238,.22);background:rgba(34,211,238,.07)}
+.app-sidebar__foot{margin-top:auto;padding:14px 16px 0;border-top:1px solid var(--border)}
+.app-sidebar__api{font-size:11px;color:var(--dim);text-decoration:none}
+.app-sidebar__api:hover{color:var(--cyan)}
+.app-main{flex:1;min-width:0;display:flex;flex-direction:column;min-height:100vh}
+.app-topbar{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:18px 22px 14px;border-bottom:1px solid var(--border);background:rgba(8,10,14,.72);backdrop-filter:blur(14px);position:sticky;top:0;z-index:20}
+.app-topbar__intro{min-width:180px;max-width:560px}
+.app-topbar__title{font-size:clamp(17px,2.1vw,21px);font-weight:750;letter-spacing:-0.03em;line-height:1.25;margin:0}
+.app-topbar__title span{color:var(--cyan)}
+.app-topbar__deck{font-size:12px;color:var(--dim);margin-top:6px;max-width:520px;line-height:1.5}
+.app-topbar__meta{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.health-pill{display:inline-flex;align-items:center;padding:6px 11px;border-radius:999px;font-size:11px;font-weight:750;letter-spacing:.02em;border:1px solid var(--border)}
+.health-pill--ok{background:rgba(16,185,129,.12);color:#6ee7b7;border-color:rgba(16,185,129,.35)}
+.health-pill--warn{background:rgba(245,158,11,.12);color:#fcd34d;border-color:rgba(245,158,11,.35)}
+.health-pill--err{background:rgba(239,68,68,.12);color:#fca5a5;border-color:rgba(239,68,68,.35)}
+.health-pill--neutral{background:var(--surface);color:var(--dim)}
+.sync-pill{font-size:11px;font-weight:600;color:var(--sub);padding:6px 10px;border-radius:8px;background:var(--surface);border:1px solid var(--border);font-variant-numeric:tabular-nums}
+.app-main-inner{max-width:1320px;margin:0 auto;padding:18px 22px 28px;width:100%}
+.app-section{scroll-margin-top:84px}
+footer.app-footer{text-align:center;padding:18px 22px 28px;color:var(--dim);font-size:12px;border-top:1px solid var(--border);background:rgba(0,0,0,.18)}
+footer.app-footer .app-footer__meta{display:flex;justify-content:center;align-items:center;gap:10px 16px;flex-wrap:wrap}
+footer.app-footer a{color:var(--sub);text-decoration:none}
+footer.app-footer a:hover{color:var(--cyan)}
+@media(max-width:1024px){
+  .app-shell{flex-direction:column}
+  .app-sidebar{width:100%;height:auto;position:relative;border-right:none;border-bottom:1px solid var(--border);flex-direction:row;flex-wrap:wrap;align-items:center;padding:10px 14px;gap:6px;max-height:none}
+  .app-brand{border-bottom:none;margin-bottom:0;padding:0 6px 0 0}
+  .app-nav{flex-direction:row;flex-wrap:wrap;flex:1;gap:3px;padding:0;justify-content:flex-start}
+  .app-nav__link{padding:7px 9px;font-size:11.5px}
+  .app-sidebar__foot{margin-top:0;padding:0;border:none;width:100%;text-align:right}
+}
+@media(max-width:640px){
+  .app-topbar{padding:14px 16px}
+  .app-main-inner{padding:12px 14px 22px}
+  .app-section{scroll-margin-top:72px}
+}
+.container{max-width:1320px;margin:0 auto;padding:24px 20px 40px}
+
+/* Header */
+.header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:22px;gap:16px;flex-wrap:wrap}
+.header h1{font-size:clamp(20px,2.5vw,24px);font-weight:750;letter-spacing:-0.03em;line-height:1.25}
+.header h1 span{color:var(--cyan)}
+.header-deck{font-size:12px;color:var(--dim);margin-top:6px;max-width:520px;line-height:1.5}
+.status-badge{display:inline-flex;align-items:center;gap:7px;padding:7px 14px;border-radius:999px;font-size:12px;font-weight:650;background:rgba(16,185,129,.1);color:var(--green);border:1px solid rgba(16,185,129,.22)}
+.status-badge .dot{width:7px;height:7px;border-radius:50%;background:var(--green);box-shadow:0 0 10px rgba(16,185,129,.6);animation:pulse 2.2s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.header-right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.shift-badge{padding:8px 13px;border-radius:10px;font-size:12px;font-weight:650;background:var(--surface);border:1px solid var(--border);color:var(--sub);box-shadow:var(--shadow-sm);font-variant-numeric:tabular-nums}
+.shift-badge--accent{border-color:rgba(34,211,238,.35);color:var(--cyan)}
+
+/* Cards */
+.grid{display:grid;gap:16px;margin-bottom:20px}
+.grid-4{grid-template-columns:repeat(4,1fr)}
+.grid-3{grid-template-columns:repeat(3,1fr)}
+.grid-2{grid-template-columns:repeat(2,1fr)}
+.grid-6{grid-template-columns:repeat(6,1fr)}
+@media(max-width:1200px){.grid-4,.grid-6{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:768px){.grid-4,.grid-3,.grid-6{grid-template-columns:repeat(2,1fr)}.grid-2{grid-template-columns:1fr}}
+
+.card{background:linear-gradient(165deg,rgba(255,255,255,.03),transparent 40%),var(--card);border-radius:var(--radius);padding:18px 20px;border:1px solid var(--border);transition:box-shadow .2s,border-color .2s;box-shadow:var(--shadow-sm)}
+.card:hover{border-color:var(--border-hi);box-shadow:0 8px 32px rgba(0,0,0,.25)}
+.card-title{font-size:11px;font-weight:700;color:var(--dim);letter-spacing:.06em;margin-bottom:10px;text-transform:uppercase}
+.card-value{font-size:clamp(26px,4vw,32px);font-weight:750;letter-spacing:-0.03em;line-height:1.15}
+.card-sub{font-size:12px;color:var(--sub);margin-top:6px;line-height:1.4}
+.panel{background:linear-gradient(180deg,rgba(255,255,255,.025),transparent 120px),var(--surface);border:1px solid var(--border);border-radius:18px;padding:20px 22px;margin-bottom:20px;box-shadow:0 2px 16px rgba(0,0,0,.2)}
+.panel-head{margin-bottom:16px}
+.panel-head .eyebrow{font-size:10px;font-weight:800;color:var(--cyan);letter-spacing:.12em;text-transform:uppercase;display:block;margin-bottom:6px}
+.panel-head .panel-title{font-size:17px;font-weight:750;color:var(--text);letter-spacing:-0.02em}
+.panel-head .panel-desc{font-size:12px;color:var(--sub);margin-top:8px;line-height:1.55;max-width:720px}
+.panel--compact{padding:16px 18px}
+.card-change{font-size:12px;font-weight:600;margin-top:4px}
+.card-change.up{color:var(--green)}.card-change.down{color:var(--red)}
+
+/* Section */
+.section{margin-bottom:22px}
+.section-title{font-size:15px;font-weight:750;margin-bottom:12px;display:flex;align-items:center;gap:10px;letter-spacing:-0.02em;color:var(--text)}
+.section-title .icon{font-size:18px;opacity:.85}
+
+/* Station Cards */
+.station-card{background:var(--card);border-radius:var(--radius-sm);padding:16px;text-align:center;position:relative;overflow:hidden}
+.station-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px}
+.station-card.ok::before{background:var(--green)}
+.station-card.warn::before{background:var(--yellow)}
+.station-card.err::before{background:var(--red)}
+.station-card.down::before{background:var(--dim)}
+.station-name{font-size:13px;font-weight:700;margin-bottom:4px}
+.station-state{font-size:11px;color:var(--sub);margin-bottom:10px}
+.station-oee{font-size:24px;font-weight:700}
+.station-oee.ok{color:var(--green)}.station-oee.warn{color:var(--yellow)}.station-oee.err{color:var(--red)}
+.station-detail{font-size:11px;color:var(--dim);margin-top:6px}
+.station-sensors{display:flex;flex-wrap:wrap;gap:4px;justify-content:center;margin-top:8px}
+.oee-micro{height:4px;background:var(--surface);border-radius:3px;margin-top:10px;overflow:hidden}
+.oee-micro>div{height:100%;border-radius:3px;transition:width .45s ease-out}
+.sensor-tag{font-size:10px;padding:2px 6px;border-radius:4px;background:var(--surface);color:var(--sub)}
+.sensor-tag.warn{background:rgba(245,166,35,.12);color:var(--yellow)}
+.sensor-tag.crit{background:rgba(240,68,82,.12);color:var(--red)}
+
+/* Agent Section */
+.agent-card{background:linear-gradient(180deg,rgba(255,255,255,.02),transparent),var(--card);border-radius:14px;padding:16px;display:flex;flex-direction:column;gap:10px;border:1px solid var(--border);transition:border-color .15s}
+.agent-card:hover{border-color:var(--border-hi)}
+.agent-header{display:flex;align-items:center;gap:10px}
+.agent-avatar{width:36px;height:36px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;color:#fff}
+.agent-info{flex:1}
+.agent-name{font-size:13px;font-weight:700}
+.agent-role{font-size:11px;color:var(--sub)}
+.agent-status{font-size:11px;padding:3px 8px;border-radius:6px;font-weight:600}
+.agent-status.idle{background:var(--surface);color:var(--sub)}
+.agent-status.active{background:rgba(49,130,246,.12);color:var(--blue)}
+.agent-status.alert{background:rgba(240,68,82,.12);color:var(--red)}
+.agent-reasoning{font-size:12px;color:var(--sub);background:var(--surface);padding:8px 10px;border-radius:8px;line-height:1.5;min-height:34px;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.agent-stats{display:flex;gap:12px;font-size:11px;color:var(--dim)}
+.agent-stats span{display:flex;align-items:center;gap:3px}
+.mon-ctx-bar{display:none;flex-wrap:wrap;gap:8px 16px;align-items:center;padding:12px 16px;margin-bottom:18px;background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.22);border-radius:12px;font-size:11px;color:var(--sub)}
+.mon-ctx-bar.is-visible{display:flex}
+.mctx-chip{white-space:nowrap}
+.mctx-chip b{color:var(--text);font-weight:650;margin-right:4px}
+.agent-subviews{margin-top:6px;padding-top:10px;border-top:1px dashed var(--border)}
+.subview-block{margin-bottom:8px}
+.subview-block:last-child{margin-bottom:0}
+.subview-h{display:flex;align-items:baseline;gap:8px;margin-bottom:3px;flex-wrap:wrap}
+.subview-id{font-size:10px;font-weight:800;color:var(--cyan);letter-spacing:.04em}
+.subview-role{font-size:10px;color:var(--dim)}
+.subview-kv{font-size:10px;color:var(--sub);line-height:1.5;word-break:break-word}
+
+/* Message Stream */
+.msg-list{max-height:400px;overflow-y:auto;display:flex;flex-direction:column;gap:0;border:1px solid var(--border);border-radius:12px;background:var(--bg)}
+.msg-list::-webkit-scrollbar{width:5px}.msg-list::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:4px}
+.msg-item{display:grid;grid-template-columns:52px minmax(120px,1fr) 72px 1fr;align-items:center;gap:10px;padding:10px 12px;font-size:12px;transition:background .12s;border-bottom:1px solid rgba(42,47,58,.6)}
+.msg-item:last-child{border-bottom:none}
+.msg-item:hover{background:rgba(59,130,246,.06)}
+.msg-time{color:var(--dim);font-size:11px;font-variant-numeric:tabular-nums}
+.msg-agents{display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+.msg-badge{padding:3px 7px;border-radius:6px;font-size:10px;font-weight:750}
+.msg-arrow{color:var(--dim);font-size:10px;opacity:.7}
+.msg-intent{color:var(--purple);font-weight:650;font-size:11px}
+.msg-text{color:var(--sub);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+@media(max-width:900px){
+  .msg-item{grid-template-columns:1fr;gap:6px}
+}
+
+/* Materials */
+.mat-row{margin-bottom:16px}
+.mat-row:last-child{margin-bottom:0}
+.mat-bar{height:7px;border-radius:4px;background:rgba(0,0,0,.25);overflow:hidden;margin-top:6px}
+.mat-fill{height:100%;border-radius:4px;transition:width .5s}
+
+.live-tick{font-size:12px;color:var(--cyan);background:rgba(34,211,238,.07);border:1px solid rgba(34,211,238,.22);border-radius:12px;padding:11px 14px;margin-top:12px;font-variant-numeric:tabular-nums;line-height:1.45}
+.ops-strip{display:flex;flex-wrap:wrap;gap:18px 22px;font-size:12px;color:var(--sub);background:var(--card);padding:14px 16px;border-radius:12px;border:1px solid var(--border)}
+.ops-strip b{color:var(--text);font-weight:650}
+.ops-strip .sep{opacity:.35;user-select:none}
+.agent-mini{margin-top:6px;font-size:10px;color:var(--dim);line-height:1.4}
+.msg-item.system{background:rgba(49,130,246,.08)}
+
+/* MES 스타일 라인 도식 */
+.mes-banner{background:linear-gradient(145deg,rgba(59,130,246,.06),transparent 50%),var(--surface);border:1px solid var(--border);border-radius:18px;padding:18px 20px;margin-bottom:0;box-shadow:0 2px 20px rgba(0,0,0,.2)}
+.mes-banner-title{font-size:10px;font-weight:800;color:var(--cyan);letter-spacing:.11em;text-transform:uppercase;margin-bottom:14px}
+.line-schematic{display:flex;flex-wrap:wrap;align-items:stretch;gap:10px 8px;justify-content:flex-start;min-height:112px;padding:4px 0}
+#section-line .mes-banner--line{background:linear-gradient(145deg,rgba(59,130,246,.1),rgba(15,23,42,.4) 55%);border:1px solid var(--border);border-radius:18px;padding:18px 20px;box-shadow:0 4px 24px rgba(0,0,0,.28)}
+.wc-arr,.wc-arr-sp{display:flex;align-items:center;color:var(--sub);font-size:16px;font-weight:600;padding:0 4px;user-select:none;opacity:.9}
+.wc-node{flex:1;min-width:104px;max-width:148px;background:var(--card);border:1px solid rgba(148,163,184,.35);border-radius:14px;padding:14px 10px;text-align:center;position:relative;border-top:4px solid var(--dim);transition:transform .15s,box-shadow .15s;box-shadow:0 2px 12px rgba(0,0,0,.18)}
+.wc-node:hover{transform:translateY(-1px);box-shadow:0 6px 20px rgba(0,0,0,.25)}
+.wc-node.ln-ok{border-top-color:var(--green)}
+.wc-node.ln-warn{border-top-color:var(--yellow)}
+.wc-node.ln-err{border-top-color:var(--red)}
+.wc-node .wc-id{font-size:10px;color:var(--cyan);font-weight:600;display:block;font-variant-numeric:tabular-nums;letter-spacing:.02em}
+.wc-node .wc-n{font-size:13px;font-weight:700;display:block;margin:6px 0 4px;color:var(--text)}
+.wc-node .wc-st{font-size:11px;color:var(--sub);line-height:1.3;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.wc-node.wc-node--fb{border-style:dashed}
+.mes-meta{margin-top:12px;font-size:12px;color:var(--sub);font-variant-numeric:tabular-nums}
+.mes-meta b{color:var(--cyan);font-weight:600}
+
+.subsection-title{font-size:13px;font-weight:700;color:var(--text);margin:18px 0 10px}
+.table-wrap{overflow-x:auto;margin-bottom:6px}
+.data-table{width:100%;border-collapse:collapse;font-size:12px}
+.data-table th,.data-table td{padding:8px 10px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+.data-table th{color:var(--dim);font-weight:600;font-size:10px;text-transform:uppercase;letter-spacing:.04em}
+.data-table td{color:var(--sub);line-height:1.45}
+.data-table .layer-id{font-weight:800;color:var(--cyan);font-variant-numeric:tabular-nums;white-space:nowrap}
+.data-table code{font-size:10px;background:var(--bg);padding:1px 5px;border-radius:4px;color:var(--purple)}
+.ea-pm-lead{font-size:12px;color:var(--sub);margin-bottom:14px;line-height:1.55}
+.ea-pm-grid{display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:8px}
+@media(max-width:1100px){.ea-pm-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:600px){.ea-pm-grid{grid-template-columns:repeat(2,1fr)}}
+.ea-pm-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:12px 10px;min-height:118px;display:flex;flex-direction:column}
+.ea-pm-card .pm-head{display:flex;justify-content:space-between;align-items:flex-start;gap:6px;margin-bottom:6px}
+.ea-pm-card .pm-id{font-size:9px;color:var(--purple);font-family:ui-monospace;line-height:1.2;word-break:break-all;max-width:58%}
+.ea-pm-card .pm-st{font-size:10px;font-weight:700;color:var(--cyan)}
+.ea-pm-card .pm-meta{font-size:10px;color:var(--dim);line-height:1.35;margin-top:4px;flex:1}
+.ea-pm-card .pm-rul{font-size:11px;color:var(--text);margin-top:6px;font-variant-numeric:tabular-nums}
+.ea-pm-anbar{height:6px;background:var(--surface);border-radius:3px;margin-top:8px;overflow:hidden}
+.ea-pm-anbar>div{height:100%;border-radius:3px;transition:width .35s ease-out}
+.chat-shell{display:flex;flex-direction:column;gap:12px;max-width:920px}
+.chat-messages{min-height:280px;max-height:min(52vh,520px);overflow-y:auto;padding:12px 8px;border:1px solid var(--border);border-radius:14px;background:rgba(0,0,0,.2);display:flex;flex-direction:column;gap:10px}
+.chat-messages::-webkit-scrollbar{width:6px}.chat-messages::-webkit-scrollbar-thumb{background:var(--border-hi);border-radius:4px}
+.chat-bubble{max-width:92%;font-size:13px;line-height:1.55}
+.chat-bubble--bot{align-self:flex-start}
+.chat-bubble--user{align-self:flex-end}
+.chat-bubble-inner{padding:10px 14px;border-radius:14px;white-space:pre-wrap;word-break:break-word}
+.chat-bubble--bot .chat-bubble-inner{background:var(--surface);border:1px solid var(--border);color:var(--text);border-bottom-left-radius:4px}
+.chat-bubble--user .chat-bubble-inner{background:rgba(59,130,246,.18);border:1px solid rgba(59,130,246,.35);color:var(--text);border-bottom-right-radius:4px}
+.chat-welcome{font-size:12px;color:var(--sub);padding:8px 12px;line-height:1.55;border-left:3px solid var(--cyan);background:rgba(34,211,238,.06);border-radius:0 8px 8px 0}
+.chat-composer{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+.chat-input{flex:1;min-width:200px;min-height:46px;max-height:120px;padding:11px 14px;border-radius:12px;border:1px solid var(--border);background:var(--bg);color:var(--text);font-size:13px;font-family:inherit;resize:vertical;line-height:1.45}
+.chat-send{padding:11px 20px;border-radius:12px;border:none;background:linear-gradient(180deg,var(--blue),#2563eb);color:#fff;font-weight:700;font-size:13px;cursor:pointer;flex-shrink:0}
+.chat-send:hover{filter:brightness(1.06)}
+.chat-send:disabled{opacity:.5;cursor:not-allowed}
+.chat-clear{font-size:12px;color:var(--dim);background:transparent;border:1px solid var(--border);padding:8px 12px;border-radius:8px;cursor:pointer}
+.chat-clear:hover{color:var(--text);border-color:var(--border-hi)}
+.chat-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap}
+.chat-hint{font-size:11px;color:var(--dim)}
+</style>
+</head>
+<body class="app-body">
+<div class="app-shell">
+<aside class="app-sidebar" aria-label="섹션 내비게이션">
+  <div class="app-brand">
+    <span class="app-brand-mark">MAS</span>
+    <div class="app-brand-text">
+      <span class="app-brand-title">Operations</span>
+      <span class="app-brand-sub">제조 멀티 에이전트</span>
+    </div>
+  </div>
+  <nav class="app-nav" aria-label="페이지 섹션">
+    <a href="#section-overview" class="app-nav__link">개요 · KPI</a>
+    <a href="#section-line" class="app-nav__link">생산 라인</a>
+    <a href="#section-stations" class="app-nav__link">공정 상세</a>
+    <a href="#section-agents" class="app-nav__link">에이전트</a>
+    <a href="#section-streams" class="app-nav__link">메시지 · 자재</a>
+    <a href="#section-pm" class="app-nav__link">예지보전</a>
+    <a href="#section-system" class="app-nav__link">시스템</a>
+    <a href="#section-chat" class="app-nav__link app-nav__link--accent">질의</a>
+  </nav>
+  <div class="app-sidebar__foot">
+    <a href="/docs" class="app-sidebar__api" target="_blank" rel="noopener">OpenAPI · /docs</a>
+  </div>
+</aside>
+<div class="app-main">
+<header class="app-topbar">
+  <div class="app-topbar__intro">
+    <h1 class="app-topbar__title">공장 <span>모니터</span></h1>
+    <p class="header-deck app-topbar__deck">2초 폴링 · SSE 틱</p>
+  </div>
+  <div class="app-topbar__meta">
+    <span class="health-pill health-pill--neutral" id="health-pill" title="OEE 구간">—</span>
+    <span class="sync-pill" id="sync-pill">갱신 —</span>
+    <div class="shift-badge shift-badge--accent" id="h-oee-head">평균 OEE —</div>
+    <div class="shift-badge" id="h-shift">교대: -</div>
+    <div class="shift-badge" id="h-cycle">사이클 #0</div>
+    <div class="status-badge"><span class="dot"></span>실시간</div>
+  </div>
+</header>
+
+<div class="app-main-inner">
+<div id="api-error" style="display:none;background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.35);color:#fca5a5;border-radius:12px;padding:14px 18px;margin-bottom:18px;font-size:13px;line-height:1.55"></div>
+
+<section id="section-overview" class="app-section">
+<div class="grid grid-4 section">
+  <div class="card">
+    <div class="card-title">전체 OEE</div>
+    <div class="card-value" id="k-oee">--%</div>
+    <div class="card-sub" id="k-oee-sub">가용 × 성능 × 품질</div>
+  </div>
+  <div class="card">
+    <div class="card-title">직행률 (FPY)</div>
+    <div class="card-value" id="k-fpy">--%</div>
+    <div class="card-sub" id="k-fpy-sub">양품 / 전체</div>
+  </div>
+  <div class="card">
+    <div class="card-title">총 생산</div>
+    <div class="card-value" id="k-produced">--</div>
+    <div class="card-sub" id="k-produced-sub">완제품 / 폐기 / 재작업</div>
+  </div>
+  <div class="card">
+    <div class="card-title">납기 준수율</div>
+    <div class="card-value" id="k-delivery">--%</div>
+    <div class="card-sub" id="k-delivery-sub">출하 / 주문</div>
+  </div>
+</div>
+<div id="mon-ctx-bar" class="mon-ctx-bar" aria-live="polite" tabindex="-1"></div>
+</section>
+
+<section id="section-line" class="app-section">
+<div class="panel">
+  <div class="panel-head">
+    <span class="eyebrow">생산 라인</span>
+    <h2 class="panel-title">6공정 흐름 · 공정별 OEE</h2>
+    <p class="panel-desc">좌→우 공정 순서 · 상단 색=OEE 구간</p>
+  </div>
+  <div class="mes-banner mes-banner--line">
+    <div class="line-schematic" id="line-schematic"></div>
+    <div class="mes-meta"><b id="h-clock">--:--:--</b> 공장 시계 · 마지막 갱신 <span id="last-poll">-</span></div>
+    <div class="live-tick" id="live-tick">틱 대기 — 가동 시 SSE</div>
+  </div>
+</div>
+</section>
+
+<section id="section-stations" class="app-section">
+<div class="panel">
+  <div class="panel-head">
+    <span class="eyebrow">공정</span>
+    <h2 class="panel-title">공정 상세</h2>
+    <p class="panel-desc">OEE · 상태 · 센서</p>
+  </div>
+  <div class="grid grid-6" id="stations-grid">
+    <div class="station-card down"><div class="station-name">조회 중…</div></div>
+  </div>
+</div>
+</section>
+
+<section id="section-agents" class="app-section">
+<div class="panel">
+  <div class="panel-head">
+    <span class="eyebrow">에이전트</span>
+    <h2 class="panel-title">에이전트 상태</h2>
+    <p class="panel-desc">판단 요약 · 서브 뷰</p>
+  </div>
+  <div class="grid grid-3" id="agents-grid"></div>
+</div>
+</section>
+
+<section id="section-streams" class="app-section">
+<div class="grid grid-2 section">
+  <div class="card">
+    <div class="card-title">에이전트 메시지 스트림</div>
+    <div class="card-sub" style="margin:-4px 0 12px">SSE</div>
+    <div class="msg-list" id="msg-list"></div>
+  </div>
+  <div class="card">
+    <div class="card-title">자재 · 안전재고</div>
+    <div class="card-sub" style="margin:-4px 0 12px">재고 · 안전재고</div>
+    <div id="materials-box"></div>
+  </div>
+</div>
+</section>
+
+<section id="section-pm" class="app-section">
+<div class="panel">
+  <div class="panel-head">
+    <span class="eyebrow">설비</span>
+    <h2 class="panel-title">예지보전 (EA)</h2>
+    <p class="panel-desc">WC별 RUL · 이상도</p>
+  </div>
+  <div class="ea-pm-grid" id="ea-pm-grid"></div>
+  <div class="subsection-title" style="margin-top:18px">등록된 예지 모델</div>
+  <div class="table-wrap" id="tbl-pm-catalog"></div>
+</div>
+</section>
+
+<section id="section-system" class="app-section">
+<div class="panel panel--compact" style="margin-bottom:16px">
+  <div class="panel-head" style="margin-bottom:12px">
+    <span class="eyebrow">운영</span>
+    <h2 class="panel-title" style="font-size:15px">신호 · 브로커</h2>
+  </div>
+  <div class="ops-strip" id="router-strip">
+    <span><b>진동</b> <span id="rv-v">-</span> mm/s</span><span class="sep">|</span>
+    <span><b>유온</b> <span id="rv-o">-</span> °C</span><span class="sep">|</span>
+    <span><b>자재 버퍼</b> <span id="rv-m">-</span> h</span><span class="sep">|</span>
+    <span><b>브로커 발행</b> <span id="rv-bpub">-</span></span><span class="sep">|</span>
+    <span><b>평균 지연</b> <span id="rv-blat">-</span> ms</span>
+  </div>
+</div>
+<div class="grid grid-4 section">
+  <div class="card">
+    <div class="card-title">메시지 브로커</div>
+    <div class="card-value" id="k-msgs">0</div>
+    <div class="card-sub" id="k-msgs-sub">누적 발행 · 평균 지연</div>
+  </div>
+  <div class="card">
+    <div class="card-title">CNP 협상</div>
+    <div class="card-value" id="k-cnp">0</div>
+    <div class="card-sub">계획 에이전트 주관 협의</div>
+  </div>
+  <div class="card">
+    <div class="card-title">에너지</div>
+    <div class="card-value" id="k-energy">--</div>
+    <div class="card-sub" id="k-energy-sub">누적 kWh · 단위당</div>
+  </div>
+  <div class="card">
+    <div class="card-title">가동 · 이벤트</div>
+    <div class="card-value" id="k-uptime">0s</div>
+    <div class="card-sub" id="k-uptime-sub">API 가동 / 처리 이벤트</div>
+  </div>
+</div>
+</section>
+
+<section id="section-chat" class="app-section">
+<div class="panel">
+  <div class="panel-head">
+    <span class="eyebrow">질의</span>
+    <h2 class="panel-title">스냅샷 질의</h2>
+    <p class="panel-desc">현재 스냅샷만 사용 · <code>/api/ask</code></p>
+  </div>
+  <div class="chat-shell">
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-welcome" id="chat-welcome">스냅샷에 없는 항목은 답하지 않음.</div>
+    </div>
+    <div class="chat-toolbar">
+      <span class="chat-hint" id="chat-hint"></span>
+      <button type="button" class="chat-clear" id="chat-clear" title="대화만 초기화">대화 지우기</button>
+    </div>
+    <div class="chat-composer">
+      <textarea class="chat-input" id="chat-input" rows="2" placeholder="질문 (Enter 전송, Shift+Enter 줄바꿈)"></textarea>
+      <button type="button" class="chat-send" id="chat-send">전송</button>
+    </div>
+  </div>
+</div>
+</section>
+
+</div>
+
+<footer class="app-footer">
+  <div class="app-footer__meta">
+    <span>MAS · 6WC × 6역할</span>
+    <span aria-hidden="true">·</span>
+    <span id="app-footer-version">버전 …</span>
+    <span aria-hidden="true">·</span>
+    <a href="/api/status" target="_blank" rel="noopener">/api/status</a>
+  </div>
+</footer>
+</div>
+</div>
+
+<script>
+const AC={EA:'#22d3ee',QA:'#00c471',SA:'#3182f6',DA:'#a855f7',IA:'#f5a623',PA:'#6366f1'};
+const AN={EA:'설비',QA:'품질',SA:'자재',DA:'수요',IA:'재고',PA:'계획'};
+const AR={EA:'예지보전·이상탐지',QA:'SPC·관리도·Cpk',SA:'자재흐름·ROP',DA:'수요예측·스케줄링',IA:'WIP·병목탐지',PA:'OEE최적화·CNP'};
+const SN={
+  'WC-01':'블랭킹','WC-02':'포밍','WC-03':'용접',
+  'WC-04':'열처리','WC-05':'CNC','WC-06':'조립/검사'
+};
+const WCS=['WC-01','WC-02','WC-03','WC-04','WC-05','WC-06'];
+
+const $=id=>document.getElementById(id);
+
+const _qs=new URLSearchParams(window.location.search||'');
+const _API_TOKEN=_qs.get('token')||'';
+function apiPath(p){
+  if(!_API_TOKEN)return p;
+  const sep=p.indexOf('?')>=0?'&':'?';
+  return p+sep+'token='+encodeURIComponent(_API_TOKEN);
+}
+async function fetchJson(p){
+  const r=await fetch(apiPath(p));
+  const data=await r.json().catch(()=>({}));
+  data._httpStatus=r.status;
+  return data;
+}
+
+function oeeClass(v){return v>=.85?'ok':v>=.65?'warn':'err'}
+function pct(v){return(v*100).toFixed(1)+'%'}
+
+function esc(s){
+  if(s==null)return '';
+  const t=typeof s==='object'?JSON.stringify(s,null,0):String(s);
+  return t.replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function fmtSubVal(v){
+  if(v===null||v===undefined)return '—';
+  if(Array.isArray(v))return v.length?v.map(x=>String(x)).join(', '):'—';
+  if(typeof v==='object'){const j=JSON.stringify(v);return j.length>140?j.slice(0,137)+'…':j;}
+  return String(v);
+}
+function renderSubAgentViews(sv){
+  if(!sv||typeof sv!=='object')return '';
+  const parts=[];
+  for(const [sid,obj] of Object.entries(sv)){
+    if(!obj||typeof obj!=='object')continue;
+    const role=obj.role_ko||'';
+    const kv=[];
+    for(const [k,v] of Object.entries(obj)){
+      if(k==='role_ko')continue;
+      kv.push(esc(k)+': '+esc(fmtSubVal(v)));
+    }
+    parts.push(`<div class="subview-block"><div class="subview-h"><span class="subview-id">${esc(sid)}</span><span class="subview-role">${esc(role)}</span></div><div class="subview-kv">${kv.join(' · ')}</div></div>`);
+  }
+  if(!parts.length)return '';
+  return `<div class="agent-subviews">${parts.join('')}</div>`;
+}
+function renderMonCtx(mctx){
+  const el=$('mon-ctx-bar');
+  if(!el)return;
+  if(!mctx||!mctx.plant||typeof mctx.plant!=='object'){
+    el.classList.remove('is-visible');
+    el.innerHTML='';
+    return;
+  }
+  const p=mctx.plant||{}, t=mctx.temporal||{}, s=mctx.summary||{}, meta=mctx.meta||{};
+  const stn=(mctx.station_ids&&mctx.station_ids.length)||0;
+  const sku=(mctx.material_skus&&mctx.material_skus.length)||0;
+  el.innerHTML='<span class="mctx-chip"><b>사이트</b> '+esc(p.site_id||'')+'</span><span class="mctx-chip"><b>라인</b> '+esc(p.line_id||'')+'</span><span class="mctx-chip"><b>스키마</b> '+esc(p.schema_version||'')+'</span><span class="mctx-chip"><b>스냅샷</b> '+esc(p.snapshot_kind||'')+'</span><span class="mctx-chip"><b>사이클</b> '+(t.logical_clock_cycle!=null?t.logical_clock_cycle:'—')+'</span><span class="mctx-chip"><b>시뮬시간</b> '+(t.sim_time_sec!=null?Number(t.sim_time_sec).toFixed(1)+'s':'—')+'</span><span class="mctx-chip"><b>공정</b> '+stn+' · <b>자재 SKU</b> '+sku+'</span><span class="mctx-chip"><b>교대</b> '+esc(s.shift||'—')+'</span><span class="mctx-chip"><b>주문</b> '+(meta.orders_n!=null?meta.orders_n:'—')+' · <b>WIP버퍼</b> '+(meta.wip_buffers_n!=null?meta.wip_buffers_n:'—')+'</span>';
+  el.classList.add('is-visible');
+}
+
+function lineClass(oee){
+  if(oee>=.85)return 'ln-ok';
+  if(oee>=.65)return 'ln-warn';
+  return 'ln-err';
+}
+
+/** /api/factory 의 stations 가 비어도 kpi.station_oee · manufacturing_context 로 도식을 채운다 */
+function buildLineStationMap(factory, mon, kpi){
+  const raw=factory.stations||{};
+  if(Object.keys(raw).length)return {map:raw, fallback:false};
+  const so=kpi&&kpi.station_oee;
+  if(so&&typeof so==='object'){
+    const keys=Object.keys(so);
+    if(keys.length){
+      const out={};
+      for(const sid of keys){
+        const oeeObj=so[sid];
+        const oee=oeeObj&&typeof oeeObj.oee==='number'?oeeObj.oee:0;
+        out[sid]={state:'—',oee:{oee}};
+      }
+      return {map:out, fallback:true};
+    }
+  }
+  const ids=mctxStationIds(mon);
+  if(ids.length){
+    const avg=kpiAvgOee(kpi, mon);
+    const out={};
+    for(const sid of ids){
+      out[sid]={state:'요약',oee:{oee:avg}};
+    }
+    return {map:out, fallback:true};
+  }
+  return {map:{}, fallback:false};
+}
+function mctxStationIds(mon){
+  const m=mon&&mon.manufacturing_context;
+  const ids=m&&m.station_ids;
+  return Array.isArray(ids)?ids:[];
+}
+function kpiAvgOee(kpi, mon){
+  if(kpi&&kpi.avg_oee!=null)return Number(kpi.avg_oee);
+  if(mon&&mon.factory&&mon.factory.avg_oee!=null)return Number(mon.factory.avg_oee);
+  return 0;
+}
+
+function renderLineSchematic(factory, mon, kpi){
+  const el=$('line-schematic');
+  if(!el)return;
+  if(factory&&factory.error){
+    el.innerHTML='<span style="color:#fbbf24;font-size:13px">공장 스냅샷 오류: '+esc(String(factory.error))+'</span>';
+    return;
+  }
+  const {map:st, fallback:fb}=buildLineStationMap(factory||{}, mon||{}, kpi||{});
+  if(!Object.keys(st).length){
+    el.innerHTML='<span style="color:var(--sub);font-size:13px;line-height:1.55">공정 스냅샷이 없습니다. <code>python main.py</code> 로 API와 공장을 함께 띄운 뒤 새로고침하세요. (API만 단독 실행이면 <code>/api/factory</code> 가 비어 있습니다.)</span>';
+    return;
+  }
+  const parts=[];
+  for(let i=0;i<WCS.length;i++){
+    const id=WCS[i];
+    const sd=st[id]||{};
+    const oee=sd.oee&&typeof sd.oee.oee==='number'?sd.oee.oee:0;
+    const lc=lineClass(oee);
+    const stt=sd.state||'—';
+    const fbCls=fb?' wc-node--fb':'';
+    parts.push(`<div class="wc-node ${lc}${fbCls}" title="${esc(id)}"><span class="wc-id">${id}</span><span class="wc-n">${SN[id]||id}</span><span class="wc-st">${esc(stt)} · OEE ${(oee*100).toFixed(0)}%</span></div>`);
+    if(i<WCS.length-1) parts.push('<div class="wc-arr">→</div>');
+  }
+  el.innerHTML=parts.join('');
+}
+
+function renderEaPmSection(mon){
+  const grid=$('ea-pm-grid');
+  const cat=$('tbl-pm-catalog');
+  const em=mon.equipment_monitoring||{};
+  const catalog=mon.equipment_catalog||[];
+  const WCS=['WC-01','WC-02','WC-03','WC-04','WC-05','WC-06'];
+  const SN={'WC-01':'블랭킹','WC-02':'포밍','WC-03':'용접','WC-04':'열처리','WC-05':'CNC','WC-06':'조립'};
+  if(grid){
+    grid.innerHTML=WCS.map(id=>{
+      const row=em[id];
+      if(!row){
+        return `<div class="ea-pm-card"><div class="pm-head"><span class="pm-st">${id}</span></div><div class="pm-meta">${esc(SN[id]||id)}<br><span style="color:var(--dim)">스냅샷 대기</span></div></div>`;
+      }
+      const an=row.max_anomaly!=null?Math.min(100,Math.round(row.max_anomaly*100)):0;
+      const ac=an>=70?'var(--red)':an>=40?'var(--yellow)':'var(--green)';
+      return `<div class="ea-pm-card">
+        <div class="pm-head"><span class="pm-st">${id} · ${esc(row.station_type||'')}</span><span class="pm-id">${esc(row.model_id||'')}</span></div>
+        <div class="pm-meta">${esc(row.model_name_kr||'')}<br><span style="color:var(--sub)">${esc(row.focus||'')}</span></div>
+        <div class="pm-rul">RUL ${row.rul_hours!=null?Number(row.rul_hours).toFixed(1):'-'}h · 이상 ${row.max_anomaly!=null?row.max_anomaly.toFixed(2):'-'} <span style="color:var(--dim)">${esc(row.worst_sensor||'')}</span></div>
+        <div class="ea-pm-anbar"><div style="width:${an}%;background:${ac}"></div></div>
+      </div>`;
+    }).join('');
+  }
+  if(cat&&catalog.length){
+    cat.innerHTML='<table class="data-table"><thead><tr><th>유형</th><th>모델 ID</th><th>이름</th><th>초점</th></tr></thead><tbody>'+
+      catalog.map(r=>'<tr><td class="layer-id">'+esc(r.station_type)+'</td><td>'+esc(r.model_id)+'</td><td>'+esc(r.name_kr)+'</td><td>'+esc(r.focus)+'</td></tr>').join('')+
+      '</tbody></table>';
+  }
+}
+
+async function poll(){
+  try{
+    const errEl=$('api-error');
+    const st=await fetchJson('/api/status');
+    if(st._httpStatus===401||st.detail==='Unauthorized'){
+      if(errEl){errEl.style.display='block';errEl.innerHTML='<b>API 인증 필요</b><br><code>MAS_API_BEARER_TOKEN</code>이 설정되어 있습니다. 주소에 토큰을 붙여 접속하세요.<br>예: <code>http://localhost:8787/?token=여기에_토큰</code>';}
+      const hp401=$('health-pill'); if(hp401){ hp401.className='health-pill health-pill--err'; hp401.textContent='인증 필요'; }
+      return;
+    }
+    if(errEl&&st.factory_bound===false){
+      errEl.style.display='block';
+      errEl.innerHTML='<b>공장 데이터 미연결</b> — <code>python main.py</code>로 실행 중일 때만 대시보드에 스냅샷이 표시됩니다. API만 띄운 상태이면 이 메시지가 나옵니다.';
+    }else if(errEl&&st.factory_bound!==false){errEl.style.display='none';}
+
+    const [factory,agents,broker,kpi,mon]=await Promise.all([
+      fetchJson('/api/factory'),
+      fetchJson('/api/agents'),
+      fetchJson('/api/broker'),
+      fetchJson('/api/kpi'),
+      fetchJson('/api/monitoring'),
+    ]);
+
+    if(factory.detail==='Unauthorized'||mon.detail==='Unauthorized'){
+      if(errEl){errEl.style.display='block';errEl.innerHTML='<b>API 인증 필요</b> — URL에 <code>?token=</code> 로 접속하세요.';}
+      const hp401b=$('health-pill'); if(hp401b){ hp401b.className='health-pill health-pill--err'; hp401b.textContent='인증 필요'; }
+      return;
+    }
+
+    // Header
+    $('h-shift').textContent='교대: '+(factory.shift||'-');
+    $('h-cycle').textContent='사이클 #'+(factory.cycle||0);
+    const hc=$('h-clock');
+    if(hc&&factory.clock) hc.textContent=factory.clock;
+    const lp=$('last-poll');
+    if(lp) lp.textContent=new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const ho=$('h-oee-head');
+    const oeeHead=kpi.avg_oee!=null?kpi.avg_oee:(mon.factory&&mon.factory.avg_oee!=null?mon.factory.avg_oee:null);
+    if(ho&&oeeHead!=null){
+      ho.textContent='평균 OEE '+pct(oeeHead);
+      ho.style.borderColor=oeeHead>=.85?'rgba(16,185,129,.4)':oeeHead>=.65?'rgba(245,158,11,.4)':'rgba(239,68,68,.35)';
+      ho.style.color=oeeHead>=.85?'#6ee7b7':oeeHead>=.65?'#fcd34d':'#fca5a5';
+    }else if(ho){ho.textContent='평균 OEE —';ho.style.borderColor='';ho.style.color='';}
+
+    const sp=$('sync-pill');
+    if(sp) sp.textContent='갱신 '+new Date().toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+    const fv=$('app-footer-version');
+    if(fv&&st.version!=null&&st.version!=='') fv.textContent='v'+String(st.version);
+    const hp=$('health-pill');
+    if(hp){
+      const showWarn=errEl&&errEl.style.display==='block';
+      if(showWarn){
+        const txt=errEl.innerHTML||'';
+        if(txt.indexOf('인증')>=0){ hp.className='health-pill health-pill--err'; hp.textContent='인증 필요'; }
+        else if(txt.indexOf('미연결')>=0){ hp.className='health-pill health-pill--warn'; hp.textContent='데이터 미연결'; }
+        else{ hp.className='health-pill health-pill--warn'; hp.textContent='경고'; }
+      }else if(kpi.avg_oee!=null){
+        const o=kpi.avg_oee;
+        hp.className='health-pill '+(o>=.85?'health-pill--ok':o>=.65?'health-pill--warn':'health-pill--err');
+        hp.textContent=o>=.85?'양호':o>=.65?'주의':'낮음';
+      }else{
+        hp.className='health-pill health-pill--neutral';
+        hp.textContent='—';
+      }
+    }
+
+    renderLineSchematic(factory, mon, kpi);
+    renderEaPmSection(mon);
+
+    const rs=mon.router_snapshot||{};
+    $('rv-v').textContent=(rs.vibration_mm_s!=null)?Number(rs.vibration_mm_s).toFixed(2):'-';
+    $('rv-o').textContent=(rs.oil_temp_c!=null)?Number(rs.oil_temp_c).toFixed(1):'-';
+    $('rv-m').textContent=(rs.material_buffer_hours!=null)?Number(rs.material_buffer_hours).toFixed(1):'-';
+    const mbm=mon.broker&&mon.broker.metrics||{};
+    $('rv-bpub').textContent=(mbm.total_published??0).toLocaleString();
+    $('rv-blat').textContent=(mbm.avg_latency_ms??0).toFixed(1);
+
+    renderMonCtx(mon.manufacturing_context||{});
+
+    // KPI cards
+    if(kpi.avg_oee!=null){
+      const o=kpi.avg_oee;
+      $('k-oee').textContent=pct(o);
+      $('k-oee').style.color=o>=.85?'var(--green)':o>=.65?'var(--yellow)':'var(--red)';
+    }
+    if(kpi.fpy!=null){
+      const f=kpi.fpy;
+      $('k-fpy').textContent=pct(f);
+      $('k-fpy').style.color=f>=.95?'var(--green)':f>=.85?'var(--yellow)':'var(--red)';
+      $('k-fpy-sub').textContent=`양품 ${kpi.total_produced||0} / 폐기 ${kpi.scrap_count||0}`;
+    }
+    $('k-produced').textContent=(kpi.total_produced||0).toLocaleString();
+    $('k-produced-sub').textContent=`완제품 ${factory.fg_stock||0} / 폐기 ${kpi.scrap_count||0} / 재작업 ${kpi.rework_count||0}`;
+
+    if(kpi.on_time_delivery!=null){
+      const d=kpi.on_time_delivery;
+      $('k-delivery').textContent=pct(d);
+      $('k-delivery').style.color=d>=.95?'var(--green)':d>=.85?'var(--yellow)':'var(--red)';
+      $('k-delivery-sub').textContent=`출하 ${factory.total_delivered||0} / 주문 ${(factory.total_demand||0)+(factory.total_delivered||0)}`;
+    }
+
+    // Broker (카드용 — 위 mbm 모니터링 스냅샷과 별도)
+    const bmk=broker.metrics||{};
+    $('k-msgs').textContent=(bmk.total_published||0).toLocaleString();
+    $('k-msgs-sub').textContent=`총 발행 / 지연 ${(bmk.avg_latency_ms||0).toFixed(1)}ms`;
+
+    // Energy
+    if(kpi.total_energy_kwh!=null){
+      $('k-energy').textContent=Math.round(kpi.total_energy_kwh)+'kWh';
+      $('k-energy-sub').textContent=`단위에너지 ${(kpi.energy_per_unit||0).toFixed(2)} kWh/개`;
+    }
+
+    // Uptime
+    const up=st.uptime_sec||0;
+    const m=Math.floor(up/60),s=Math.floor(up%60);
+    $('k-uptime').textContent=m>0?m+'분 '+s+'초':s+'초';
+    $('k-uptime-sub').textContent=`이벤트 ${st.total_events||0}건 / CNP ${st.cnp_count||0}회`;
+    $('k-cnp').textContent=st.cnp_count||0;
+
+    // Stations
+    const {map:stMap}=buildLineStationMap(factory, mon, kpi);
+    let shtml='';
+    for(const sid of WCS){
+      const sd=stMap[sid];
+      if(!sd)continue;
+      const oee=sd.oee?.oee||0;
+      const cls=sd.state==='고장'?'down':sd.state==='정비'?'warn':oeeClass(oee);
+      const name=SN[sid]||sid;
+      let sensors='';
+      for(const [sn,sv] of Object.entries(sd.sensors||{})){
+        const val=sv.value!=null?sv.value.toFixed?sv.value.toFixed(1):sv.value:'';
+        const scls=Math.abs(sv.slope||0)>0.05?'warn':'';
+        sensors+=`<span class="sensor-tag ${scls}">${sn} ${val}</span>`;
+      }
+      const opct=Math.min(100,Math.round(oee*100));
+      const oc=oee>=.85?'var(--green)':oee>=.65?'var(--yellow)':'var(--red)';
+      shtml+=`<div class="station-card ${cls}">
+        <div class="station-name">${name}</div>
+        <div class="station-state">${sd.state||'—'} · 속도 ${sd.speed_pct!=null?sd.speed_pct:100}%</div>
+        <div class="station-oee ${oeeClass(oee)}">${pct(oee)}</div>
+        <div class="oee-micro"><div style="width:${opct}%;background:${oc}"></div></div>
+        <div class="station-detail">공구 ${sd.tool_life_pct!=null?sd.tool_life_pct:0}% · ${sd.tool_region||''}</div>
+        <div class="station-sensors">${sensors}</div>
+      </div>`;
+    }
+    if(!shtml) shtml='<div class="station-card down" style="grid-column:1/-1;text-align:center;padding:24px"><div class="station-name">공정 데이터 없음</div><div class="station-state" style="margin-top:8px"><code>python main.py</code> 로 공장·API를 함께 실행한 뒤 새로고침하세요.</div></div>';
+    $('stations-grid').innerHTML=shtml;
+
+    // Agents (monitoring 페이로드가 있으면 더 풍부한 필드 사용)
+    const agSrc=(mon.agents&&Object.keys(mon.agents).length)?mon.agents:agents;
+    let ahtml='';
+    for(const [aid,ag] of Object.entries(agSrc)){
+      const c=AC[aid]||'#888';
+      const name=AN[aid]||aid;
+      const role=AR[aid]||'';
+      const reasoning=ag.last_reasoning||'대기 중';
+      const stCls=ag.state==='대기'?'idle':ag.state==='오류'?'alert':'active';
+      const decisions=ag.recent_decisions||[];
+      const dCount=ag.decisions_total!=null?ag.decisions_total:decisions.length;
+      const rr=ag.recent_reasoning||[];
+      const rsLines=rr.length?rr.slice(-3).map(t=>esc(t)).join(' · '):'';
+      let extra='';
+      if(aid==='PA'&&ag.recent_strategies&&ag.recent_strategies.length){
+        extra=`<div class="agent-mini">CNP ${ag.cnp_rounds||0}회 · 최근 전략 ${ag.recent_strategies.length}건</div>`;
+      }
+      const subHtml=renderSubAgentViews(ag.sub_agent_views);
+      ahtml+=`<div class="agent-card">
+        <div class="agent-header">
+          <div class="agent-avatar" style="background:${c}">${aid}</div>
+          <div class="agent-info">
+            <div class="agent-name">${name} 에이전트</div>
+            <div class="agent-role">${role}</div>
+          </div>
+          <span class="agent-status ${stCls}">${ag.state||'대기'}</span>
+        </div>
+        <div class="agent-reasoning" title="${esc(reasoning)}">${reasoning}</div>
+        ${rsLines?`<div class="agent-mini">최근 추론: ${rsLines}</div>`:''}
+        ${extra}
+        ${subHtml}
+        <div class="agent-stats">
+          <span>사이클 ${ag.cycle_count||0}회</span>
+          <span>수신 ${ag.inbox_size||0}건</span>
+          <span>판단 누적 ${dCount}건</span>
+        </div>
+      </div>`;
+    }
+    $('agents-grid').innerHTML=ahtml;
+
+    // Materials
+    const mats=factory.materials||{};
+    let mhtml='';
+    for(const [name,md] of Object.entries(mats)){
+      const ratio=md.stock/(md.safety_stock*3||1);
+      const barColor=ratio>.5?'var(--green)':ratio>.2?'var(--yellow)':'var(--red)';
+      const barW=Math.min(100,ratio*100);
+      mhtml+=`<div class="mat-row">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;gap:8px;margin-bottom:4px">
+          <span style="font-weight:700;font-size:13px;color:var(--text)">${name}</span>
+          <span style="color:var(--sub);font-size:12px;font-variant-numeric:tabular-nums">${md.stock?.toLocaleString()||0} / ${(md.safety_stock*3||0).toLocaleString()}</span>
+        </div>
+        <div class="mat-bar"><div class="mat-fill" style="width:${barW}%;background:${barColor}"></div></div>
+        <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:6px">
+          <span>안전재고 ${md.safety_stock?.toLocaleString()||0}</span>
+          <span>${md.days_supply!=null&&md.days_supply!==''?md.days_supply+'일분':'—'}${md.needs_reorder?' · 발주 필요':''}</span>
+        </div>
+      </div>`;
+    }
+    if(!mhtml) mhtml='<p style="color:var(--dim);font-size:13px;line-height:1.5;margin:0">자재 스냅샷이 없습니다. 공장 런타임 연결 후 표시됩니다.</p>';
+    $('materials-box').innerHTML=mhtml;
+
+  }catch(e){
+    console.error(e);
+    const hp=$('health-pill');
+    if(hp){ hp.className='health-pill health-pill--err'; hp.textContent='폴링 실패'; }
+  }
+}
+
+// SSE messages (토큰은 쿼리로 전달 — EventSource는 헤더 불가)
+const evtSrc=new EventSource(apiPath('/api/stream'));
+evtSrc.onmessage=e=>{
+  try{
+    const d=JSON.parse(e.data);
+    if(d.type==='message'){
+      const box=$('msg-list');
+      const div=document.createElement('div');
+      div.className='msg-item';
+      const sc=AC[d.sender]||'#888',rc=AC[d.receiver]||'#888';
+      const sn=AN[d.sender]||d.sender,rn=AN[d.receiver]||d.receiver;
+      const now=new Date().toLocaleTimeString('ko',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+      div.innerHTML=`
+        <span class="msg-time">${now}</span>
+        <span class="msg-agents">
+          <span class="msg-badge" style="background:${sc}22;color:${sc}">${sn}</span>
+          <span class="msg-arrow">→</span>
+          <span class="msg-badge" style="background:${rc}22;color:${rc}">${rn}</span>
+        </span>
+        <span class="msg-intent">${d.intent||''}</span>
+        <span class="msg-text">${d.summary||''}</span>`;
+      box.prepend(div);
+      while(box.children.length>60)box.lastChild.remove();
+    }else if(d.type==='factory_tick'){
+      const lt=$('live-tick');
+      if(lt){
+        const oee=d.avg_oee!=null?(d.avg_oee*100).toFixed(1):'-';
+        lt.textContent=`틱 ${d.cycle||0} · ${d.clock||''} · OEE ${oee}% · FG ${d.fg_stock??'-'} · ${d.shift||'-'}`;
+      }
+    }
+  }catch(ex){}
+};
+
+setInterval(poll,2000);
+poll();
+
+(function(){
+  const MAX_HIST=24;
+  let chatHistory=[];
+  function appendChatBubble(role,text){
+    const box=$('chat-messages');
+    if(!box)return;
+    const wel=$('chat-welcome');
+    if(wel)wel.style.display='none';
+    const wrap=document.createElement('div');
+    wrap.className='chat-bubble '+(role==='user'?'chat-bubble--user':'chat-bubble--bot');
+    const inner=document.createElement('div');
+    inner.className='chat-bubble-inner';
+    inner.textContent=text==null?'':String(text);
+    wrap.appendChild(inner);
+    box.appendChild(wrap);
+    box.scrollTop=box.scrollHeight;
+  }
+  async function sendChat(){
+    const inp=$('chat-input'),btn=$('chat-send'),hint=$('chat-hint');
+    if(!inp)return;
+    const q=inp.value.trim();
+    if(!q)return;
+    appendChatBubble('user',q);
+    inp.value='';
+    if(btn)btn.disabled=true;
+    if(hint)hint.textContent='응답 중…';
+    try{
+      const r=await fetch(apiPath('/api/ask'),{
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body:JSON.stringify({question:q,history:chatHistory})
+      });
+      const d=await r.json().catch(()=>({}));
+      if(r.status===401||d.detail==='Unauthorized'){
+        appendChatBubble('assistant','API 인증이 필요합니다. URL에 ?token= 을 붙여 접속하세요.');
+        if(hint)hint.textContent='';
+        return;
+      }
+      const ans=d.answer!=null&&d.answer!==''?String(d.answer):(d.error||'응답 없음');
+      appendChatBubble('assistant',ans);
+      chatHistory.push({role:'user',content:q});
+      chatHistory.push({role:'assistant',content:ans});
+      if(chatHistory.length>MAX_HIST)chatHistory=chatHistory.slice(-MAX_HIST);
+      let h='';
+      if(d.mode)h+='모드: '+d.mode;
+      if(d.hint)h+=(h?' · ':'')+d.hint;
+      if(hint)hint.textContent=h;
+    }catch(e){
+      appendChatBubble('assistant','요청 실패: '+e);
+      if(hint)hint.textContent='';
+    }finally{
+      if(btn)btn.disabled=false;
+    }
+  }
+  function clearChat(){
+    chatHistory=[];
+    const box=$('chat-messages');
+    if(box){
+      box.innerHTML='<div class="chat-welcome" id="chat-welcome">스냅샷에 없는 항목은 답하지 않음.</div>';
+    }
+    const hint=$('chat-hint');
+    if(hint)hint.textContent='';
+  }
+  const _send=$('chat-send'),_inp=$('chat-input'),_clr=$('chat-clear');
+  if(_send)_send.addEventListener('click',sendChat);
+  if(_inp)_inp.addEventListener('keydown',function(e){
+    if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();sendChat();}
+  });
+  if(_clr)_clr.addEventListener('click',clearChat);
+})();
+</script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+# ═══════════════════════════════════════════════════════════
+# 시나리오: 설비 고장 (Equipment Failure)
+# 프레스기가 빠르게 열화되는 상황.
+# 높은 드리프트, 잦은 진동 스파이크, 센서 노이즈 증가.
+# ═══════════════════════════════════════════════════════════
+name: "설비 고장 (Equipment Failure)"
+description: "프레스 진동 드리프트 3배, 스파이크 확률 30%, 센서 노이즈 2배. 설비 에이전트의 예지보전 능력을 테스트."
+
+sensors:
+  press:
+    vibration:
+      baseline: 2.50
+      noise_std: 0.30
+      drift_rate: 0.30
+    oil_temp:
+      baseline: 48.0
+      noise_std: 1.0
+      drift_rate: 0.08
+    hydraulic_pressure:
+      baseline: 175.0
+      noise_std: 4.0
+      drift_rate: -0.20
+    motor_current:
+      baseline: 48.0
+      noise_std: 2.0
+      drift_rate: 0.05
+  weld:
+    weld_current:
+      baseline: 275.0
+      noise_std: 8.0
+      drift_rate: 0.02
+    weld_voltage:
+      baseline: 27.5
+      noise_std: 0.6
+      drift_rate: 0.01
+
+warehouse:
+  stock: 120
+  safety_stock: 45
+  service_level_target: 0.95
+  demand_std: 8.0
+  leadtime_mean: 4.5
+  leadtime_std: 2.0
+  avg_demand_per_cycle: 4.0
+
+materials:
+  steel_stock: 850
+  weld_wire: 12.5
+  shield_gas: 95.0
+  restock_threshold: 50
+
+demand:
+  shipment_interval: 2
+  shipment_batch_size: 3
+  order_quantities: [30, 50, 80, 100, 150]
+  initial_orders:
+    - order_id: "CO-001"
+      customer: "현대자동차"
+      quantity: 500
+      due_date: "2026-04-04"
+    - order_id: "CO-002"
+      customer: "기아자동차"
+      quantity: 300
+      due_date: "2026-04-05"
+
+events:
+  new_order: 0.15
+  vibration_spike: 0.30
+  equipment_stabilize: 0.05
+  material_arrival: 0.10
+  agv_change: 0.10
+  speed_recovery: 0.05
+  drift_recovery_prob: 0.03
+  drift_spike_prob: 0.15
+  urgent_order_ratio: 0.30
+  spike_magnitude: [0.5, 2.0]
+
+runtime:
+  takt_sec: 2.5
+  summary_interval: 15
+  event_interval_range: [6, 20]
+
+execution:
+  max_cycles: 100

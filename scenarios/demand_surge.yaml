@@ -1,0 +1,78 @@
+# ═══════════════════════════════════════════════════════════
+# 시나리오: 수요 폭증 (Demand Surge)
+# 대량 긴급 주문이 몰리는 상황.
+# 높은 수요 변동성, 빈번한 긴급 주문, 큰 배치 사이즈.
+# ═══════════════════════════════════════════════════════════
+name: "수요 폭증 (Demand Surge)"
+description: "긴급 주문 60%, 대량 배치, 높은 수요 변동성. 재고 에이전트와 계획 에이전트의 대응력을 테스트."
+
+sensors:
+  press:
+    vibration:
+      baseline: 1.80
+      noise_std: 0.15
+      drift_rate: 0.10
+    oil_temp:
+      baseline: 42.0
+      noise_std: 0.5
+      drift_rate: 0.03
+  weld:
+    weld_current:
+      baseline: 280.0
+      noise_std: 5.0
+
+warehouse:
+  stock: 80
+  safety_stock: 50
+  service_level_target: 0.95
+  demand_std: 15.0
+  leadtime_mean: 4.5
+  leadtime_std: 2.5
+  avg_demand_per_cycle: 7.0
+
+materials:
+  steel_stock: 600
+  weld_wire: 10.0
+  shield_gas: 80.0
+  restock_threshold: 50
+
+demand:
+  shipment_interval: 1
+  shipment_batch_size: 5
+  order_quantities: [80, 100, 150, 200, 300]
+  initial_orders:
+    - order_id: "CO-001"
+      customer: "현대자동차"
+      quantity: 800
+      due_date: "2026-04-04"
+      priority: "URGENT"
+    - order_id: "CO-002"
+      customer: "기아자동차"
+      quantity: 600
+      due_date: "2026-04-04"
+      priority: "URGENT"
+    - order_id: "CO-003"
+      customer: "GM Korea"
+      quantity: 400
+      due_date: "2026-04-05"
+      priority: "NORMAL"
+
+events:
+  new_order: 0.35
+  vibration_spike: 0.10
+  equipment_stabilize: 0.10
+  material_arrival: 0.15
+  agv_change: 0.10
+  speed_recovery: 0.10
+  drift_recovery_prob: 0.10
+  drift_spike_prob: 0.05
+  urgent_order_ratio: 0.60
+  spike_magnitude: [0.3, 1.0]
+
+runtime:
+  takt_sec: 2.0
+  summary_interval: 15
+  event_interval_range: [5, 15]
+
+execution:
+  max_cycles: 100

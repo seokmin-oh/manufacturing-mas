@@ -1,0 +1,92 @@
+# ═══════════════════════════════════════════════════════════
+# 시나리오: 정상 운영 (Baseline)
+# 모든 파라미터가 기본값. 비교 기준(baseline)으로 사용한다.
+# ═══════════════════════════════════════════════════════════
+name: "정상 운영 (Normal Operation)"
+description: "안정적인 센서, 보통 수요, 정상 자재 수준. 다른 시나리오와 비교하는 기준선."
+
+sensors:
+  press:
+    vibration:
+      baseline: 1.80
+      noise_std: 0.15
+      drift_rate: 0.10
+    oil_temp:
+      baseline: 42.0
+      noise_std: 0.5
+      drift_rate: 0.03
+    hydraulic_pressure:
+      baseline: 180.0
+      noise_std: 2.0
+      drift_rate: -0.08
+    motor_current:
+      baseline: 45.0
+      noise_std: 1.0
+      drift_rate: 0.02
+  weld:
+    weld_current:
+      baseline: 280.0
+      noise_std: 5.0
+      drift_rate: 0.0
+    weld_voltage:
+      baseline: 28.0
+      noise_std: 0.3
+      drift_rate: 0.0
+
+warehouse:
+  stock: 120
+  safety_stock: 45
+  service_level_target: 0.95
+  demand_std: 8.0
+  leadtime_mean: 4.5
+  leadtime_std: 2.0
+  avg_demand_per_cycle: 4.0
+
+materials:
+  steel_stock: 850
+  weld_wire: 12.5
+  shield_gas: 95.0
+  restock_threshold: 50
+
+demand:
+  shipment_interval: 2
+  shipment_batch_size: 3
+  order_quantities: [30, 50, 80, 100, 150]
+  initial_orders:
+    - order_id: "CO-001"
+      customer: "현대자동차"
+      quantity: 500
+      due_date: "2026-04-04"
+      priority: "NORMAL"
+    - order_id: "CO-002"
+      customer: "기아자동차"
+      quantity: 300
+      due_date: "2026-04-05"
+      priority: "NORMAL"
+
+events:
+  new_order: 0.20
+  vibration_spike: 0.15
+  equipment_stabilize: 0.15
+  material_arrival: 0.10
+  agv_change: 0.10
+  speed_recovery: 0.10
+  drift_recovery_prob: 0.10
+  drift_spike_prob: 0.05
+  urgent_order_ratio: 0.40
+  spike_magnitude: [0.3, 1.2]
+
+runtime:
+  takt_sec: 2.5
+  summary_interval: 20
+  event_interval_range: [10, 30]
+  agent_intervals:
+    EA: 2.0
+    QA: 3.0
+    SA: 5.0
+    DA: 4.0
+    IA: 3.0
+    PA: 2.0
+
+execution:
+  max_cycles: 100

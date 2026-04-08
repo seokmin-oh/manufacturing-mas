@@ -1,0 +1,90 @@
+# ═══════════════════════════════════════════════════════════
+# 시나리오: 품질 위기 (Quality Crisis)
+# 센서 노이즈가 높고, 용접 편차가 크며, 초기 Cpk가 낮은 상황.
+# 불량률이 급증하여 품질 에이전트가 적극 개입해야 한다.
+# ═══════════════════════════════════════════════════════════
+name: "품질 위기 (Quality Crisis)"
+description: "센서 노이즈 3배, 용접 편차 대폭 증가. 품질 에이전트의 SPC 및 검사 모드 전환 능력을 테스트."
+
+sensors:
+  press:
+    vibration:
+      baseline: 2.20
+      noise_std: 0.40
+      drift_rate: 0.12
+    oil_temp:
+      baseline: 45.0
+      noise_std: 1.5
+      drift_rate: 0.05
+    hydraulic_pressure:
+      baseline: 178.0
+      noise_std: 5.0
+      drift_rate: -0.10
+    motor_current:
+      baseline: 46.0
+      noise_std: 2.0
+      drift_rate: 0.03
+  weld:
+    weld_current:
+      baseline: 270.0
+      noise_std: 12.0
+      drift_rate: 0.05
+    weld_voltage:
+      baseline: 27.0
+      noise_std: 0.8
+      drift_rate: 0.02
+    wire_feed:
+      baseline: 11.5
+      noise_std: 0.5
+      drift_rate: -0.01
+    gas_flow:
+      baseline: 16.0
+      noise_std: 1.2
+      drift_rate: -0.02
+
+warehouse:
+  stock: 100
+  safety_stock: 45
+  service_level_target: 0.95
+  demand_std: 8.0
+  leadtime_mean: 5.0
+  leadtime_std: 2.5
+  avg_demand_per_cycle: 4.0
+
+materials:
+  steel_stock: 850
+  weld_wire: 12.5
+  shield_gas: 95.0
+
+demand:
+  shipment_interval: 2
+  shipment_batch_size: 3
+  initial_orders:
+    - order_id: "CO-001"
+      customer: "현대자동차"
+      quantity: 500
+      due_date: "2026-04-04"
+    - order_id: "CO-002"
+      customer: "기아자동차"
+      quantity: 300
+      due_date: "2026-04-05"
+
+events:
+  new_order: 0.15
+  vibration_spike: 0.20
+  equipment_stabilize: 0.10
+  material_arrival: 0.10
+  agv_change: 0.10
+  speed_recovery: 0.10
+  drift_recovery_prob: 0.05
+  drift_spike_prob: 0.10
+  urgent_order_ratio: 0.30
+  spike_magnitude: [0.4, 1.5]
+
+runtime:
+  takt_sec: 2.5
+  summary_interval: 15
+  event_interval_range: [8, 25]
+
+execution:
+  max_cycles: 100
