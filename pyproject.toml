@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "manufacturing-mas"
+version = "5.0.0"
+description = "자동차 부품 제조 멀티 AI 에이전트 시스템 — 6공정 시뮬레이션 + 6역할 에이전트"
+readme = "README.md"
+requires-python = ">=3.10"
+license = {text = "MIT"}
+keywords = ["manufacturing", "multi-agent", "simulation", "industry4.0"]
+
+dependencies = [
+    "openai>=1.30.0,<2",
+    "fastapi>=0.111.0,<0.116",
+    "uvicorn[standard]>=0.30.0,<0.32",
+    "paho-mqtt>=2.0.0,<3",
+    "pyyaml>=6.0,<7",
+    "langgraph>=0.2.40,<0.7",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0,<9",
+]
+
+[project.scripts]
+mas = "main:main"
+
+[tool.setuptools.packages.find]
+include = ["mas*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-q"

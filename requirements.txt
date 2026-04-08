@@ -1,0 +1,9 @@
+# Manufacturing Multi-Agent System (MAS) 5.x
+# Python 3.10+
+
+openai>=1.30.0,<2
+fastapi>=0.111.0,<0.116
+uvicorn[standard]>=0.30.0,<0.32
+paho-mqtt>=2.0.0,<3
+pyyaml>=6.0,<7
+langgraph>=0.2.40,<0.7
