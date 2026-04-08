@@ -71,11 +71,12 @@ Multi-Agent/
     ├── __init__.py                  # 공개 API: Factory, 에이전트, FactoryRuntime
     │
     ├── core/                        # 설정·로깅·`manufacturing_ids`(표준 agent/station ID)
-    ├── domain/                      # 공장·기계·생산·재고·수요·manufacturing_env
+    ├── domain/                      # Factory, 기계·재고·수요, `manufacturing_context`, `business_events`, `agent_snapshot`
     ├── messaging/                   # `message`, `broker`(MessageBus 호환), `mqtt_bridge`
-    ├── agents/                      # `base_agent`, 6종 에이전트 + 레거시 에이전트
-    ├── intelligence/              # `llm`, `decision_router`, 솔버·도메인 추론·스냅샷 보강
-    ├── protocol/                  # `cnp_session`, `agent_protocol`, `sra_langgraph`, `agentic_loop`, `contract_net`
+    ├── agents/                      # `base_agent`, 6종 + `equipment_sub`, `planning_sub`, `qa_sub`
+    ├── intelligence/              # `llm`(감사 로그), `decision_router`, `operational_decision_card`, 솔버·스냅샷 보강
+    ├── protocol/                  # `cnp_session`, `agent_protocol`, `sra_langgraph`, `cnp_comparison`, `contract_net`
+    ├── adapters/                  # 외부 시스템 연동용 Protocol (`base` 등)
     ├── runtime/                   # `factory_runtime`, `scenario_runtime`
     ├── scenario/                  # `loader` (YAML → ScenarioConfig)
     ├── tools/                     # `ai_tools`, `mock_models`

@@ -24,9 +24,16 @@ from typing import Dict, List, Optional, Any
 _log = logging.getLogger(__name__)
 
 from .base_agent import BaseAgent
+from .planning_sub import (
+    build_pa_report_lines,
+    collect_inbox_alerts,
+    rank_proposals_by_comparison,
+)
 from ..messaging.message import AgentMessage, Intent
+from ..protocol.cnp_comparison import merge_into_proposal
 from ..protocol.cnp_session import CNPSession, CNPConstraints, PROTOCOL_VERSION
 from ..intelligence.optimization_engine import build_llm_context
+from ..intelligence.operational_decision_card import from_cnp_strategy
 
 KPI_WEIGHTS = {
     "quality": 0.30,
@@ -49,18 +56,12 @@ class PlanningAgent(BaseAgent):
 
     def sense(self, snapshot: Dict) -> Dict:
         msgs = self.pop_inbox()
-        alerts = []
-        for msg in msgs:
-            if msg.intent in (Intent.ALERT, Intent.STOCK_ALERT, Intent.DEMAND_CHANGE):
-                alerts.append({
-                    "sender": msg.header.sender,
-                    "intent": msg.intent.value,
-                    "severity": msg.body.get("severity", "LOW"),
-                    "summary": msg.body.get("summary", ""),
-                    "body": msg.body,
-                })
-
+        alerts = collect_inbox_alerts(msgs)
         self._pending_alerts = alerts
+
+        mctx = snapshot.get("manufacturing_context") if isinstance(snapshot.get("manufacturing_context"), dict) else {}
+        id_block = mctx.get("identifiers") if isinstance(mctx, dict) else {}
+        kpi_line = (mctx.get("kpi_slices") or {}).get("line") if isinstance(mctx, dict) else {}
 
         return {
             "cycle": snapshot.get("cycle", 0),
@@ -71,6 +72,9 @@ class PlanningAgent(BaseAgent):
             "shift": snapshot.get("shift", ""),
             "alerts": alerts,
             "stations": snapshot.get("stations", {}),
+            "business_events": snapshot.get("business_events") or [],
+            "standard_identifiers": id_block,
+            "standard_line_kpi": kpi_line,
         }
 
     def reason(self, obs: Dict) -> Optional[Dict]:
@@ -186,6 +190,7 @@ class PlanningAgent(BaseAgent):
                 if not raw:
                     continue
                 prop = dict(raw)
+                merge_into_proposal(prop)
                 sp = prop.get("speed_recommendation", prop.get("target_speed_pct", 100))
                 try:
                     sp = int(float(sp))
@@ -214,11 +219,18 @@ class PlanningAgent(BaseAgent):
             return None
 
         session.mark_evaluating()
-        proposals.sort(key=lambda p: p["total_score"], reverse=True)
+        proposals = rank_proposals_by_comparison(proposals)
         best = proposals[0]
 
         strategy = self._build_strategy(proposals, snapshot)
         strategy = session.clamp_strategy(strategy)
+        strategy["operational_decision_card"] = from_cnp_strategy(
+            situation,
+            proposals,
+            strategy,
+            snapshot,
+        )
+        strategy["pa_report_lines"] = build_pa_report_lines(strategy, proposals)
 
         for agent in agents:
             if agent.agent_id == self.agent_id:
@@ -301,8 +313,11 @@ class PlanningAgent(BaseAgent):
                 "pending_alerts": len(self._pending_alerts),
             },
             "PA-ALERT": {
-                "role_ko": "경보·전략 로그",
+                "role_ko": "경보 수집 (Alert collector)",
                 "last_cnp_cycle": self._last_cnp_cycle,
             },
+            "PA-RANK": {"role_ko": "대안 랭킹 (Recommendation ranker)"},
+            "PA-EVAL": {"role_ko": "제약 평가 (Constraint evaluator)"},
+            "PA-REPORT": {"role_ko": "전략 리포트 (Report generator)"},
         }
         return st

@@ -20,7 +20,10 @@ from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
 
 from .base_agent import BaseAgent
+from .qa_sub import spc as qa_spc
+from .qa_sub import vision as qa_vision
 from ..messaging.message import Intent
+from ..protocol.cnp_comparison import merge_into_proposal
 
 
 class QualityAgent(BaseAgent):
@@ -63,6 +66,7 @@ class QualityAgent(BaseAgent):
             "defect_trend": "안정",
             "yield_by_station": {},
             "quality_risk_stations": [],
+            "recent_business_events": snapshot.get("business_events") or [],
         }
 
         for sid, sdata in stations.items():
@@ -110,6 +114,9 @@ class QualityAgent(BaseAgent):
             obs["defect_trend"] = "악화"
         elif risk_count >= self.RISK_STATIONS_WARN:
             obs["defect_trend"] = "주의"
+
+        obs["qa_sub_spc"] = qa_spc.summarize_spc(obs)
+        obs["qa_sub_vision"] = qa_vision.vision_channel_stub(stations)
 
         cpk_vals = [v["cpk"] for v in obs["cpk_status"].values()] if obs["cpk_status"] else []
         min_cpk = min(cpk_vals) if cpk_vals else 2.0
@@ -231,7 +238,7 @@ class QualityAgent(BaseAgent):
         )
         cost_est = max(0.0, min(1.0, (self.CPK_GOOD - worst_cpk) / self.CPK_GOOD)) if worst_cpk < self.CPK_GOOD else 0.0
         viol = 1.0 if worst_cpk < self.CPK_WARNING else (0.5 if worst_cpk < self.CPK_GOOD else 0.0)
-        return {
+        out = {
             "agent": self.agent_id,
             "proposal": "품질 관점 대응",
             "inspection_mode": "전수" if worst_cpk < self.CPK_WARNING else "강화",
@@ -245,8 +252,15 @@ class QualityAgent(BaseAgent):
                 "cost_estimate": round(cost_est, 4),
                 "constraint_violation_total": viol,
                 "worst_cpk": round(worst_cpk, 3),
+                "expected_effect": round(0.5 + 0.5 * (worst_cpk / max(self.CPK_GOOD, 0.01)), 4),
+                "quality_risk": round(1.0 - min(1.0, worst_cpk / self.CPK_GOOD), 4),
+                "delivery_impact": 0.2,
+                "material_impact": 0.1,
+                "confidence": 0.82,
             },
         }
+        merge_into_proposal(out)
+        return out
 
     def execute_accepted_proposal(self, proposal: Dict):
         mode = proposal.get("inspection_mode", self._inspection_mode)

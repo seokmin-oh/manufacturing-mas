@@ -193,10 +193,13 @@ sequenceDiagram
 - 에이전트는 **항상 최신 스냅샷**을 주기적으로 받습니다(스레드 타이밍에 따라 한두 택트 지연 가능).
 - **브로커 메시지**는 다른 에이전트 알림·CNP 등에 사용됩니다.
 
-### 7.1 라우터 통합 SRA · CNP 세션 · 스냅샷 보강
+### 7.1 라우터 통합 SRA · CNP 세션 · 스냅샷 보강 (2단계)
 
-- **Sense → HybridDecisionRouter → Reason → Act** (`mas/agent_protocol.py`의 `run_cycle_with_router`, 프로토콜 ID `mas.sra.v2`): 기본 구현은 **LangGraph** 상태 그래프(`mas/protocol/sra_langgraph.py`: `sense` → `enrich` → `router` → `reason` → `act`). `MAS_USE_LANGGRAPH=0` 이거나 `langgraph` 미설치 시 동일 의미의 순차 구현으로 폴백합니다. 스냅샷을 `enrich_snapshot_for_router()`로 보강한 뒤, 규칙·LLM 하이브리드 라우터가 **다음 행동**(예: `PA_CNP`, `PA_STRATEGY`, `EA_ALERT`)을 선택합니다. EA가 PA에게 보낸 **미처리 알림**(`new_alerts`)은 라우터 조건에도 반영됩니다.
-- **CNP**: `CNPSession`(`mas/cnp_session.py`)으로 라운드·제안 속도·전략을 검증·클램프하고, `initiate_cnp` 시 브로커에 **`Intent.CFP`**를 발행해 다른 에이전트가 구독할 수 있게 합니다. `protocol_version`은 세션 메타에 기록됩니다.
+- **Sense → HybridDecisionRouter → Reason → Act** (`mas/protocol/agent_protocol.py`의 `run_cycle_with_router`, 프로토콜 ID `mas.sra.v2`): 기본 구현은 **LangGraph** 상태 그래프(`mas/protocol/sra_langgraph.py`: `sense` → `enrich` → `router` → `reason` → `act`). `MAS_USE_LANGGRAPH=0` 이거나 `langgraph` 미설치 시 동일 의미의 순차 구현으로 폴백합니다.
+- **에이전트 입력 보강(1단계)** — `enrich_snapshot_for_agents()` (`mas/domain/agent_snapshot.py`): raw `get_snapshot()`에 `manufacturing_context`(계약 v2, `ingest_time_utc_iso` 포함)를 붙입니다. 공장 스냅샷에는 **`business_events`**(최근 비즈니스 이벤트 테일)가 포함될 수 있습니다.
+- **라우터용 보강(2단계)** — `enrich_snapshot_for_router()` (`mas/intelligence/snapshot_enrichment.py`): 라우터가 쓰는 파생 지표를 추가한 뒤 `HybridDecisionRouter.route`가 **다음 행동**(예: `PA_CNP`, `PA_STRATEGY`, `EA_ALERT`)을 선택합니다. EA가 PA에게 보낸 **미처리 알림**(`new_alerts`)은 라우터 조건에도 반영됩니다.
+- **CNP**: `CNPSession`(`mas/cnp_session.py`)으로 라운드·제안 속도·전략을 검증·클램프하고, `initiate_cnp` 시 브로커에 **`Intent.CFP`**를 발행합니다. 런타임은 CNP 호출 시 **`enrich_snapshot_for_agents`**가 적용된 스냅샷을 넘깁니다. EA·QA 등의 `handle_cfp`는 `mas/protocol/cnp_comparison.py`의 **`merge_into_proposal`**로 제안에 **`comparison`** 블록을 병합할 수 있으며, PA는 **`rank_proposals_by_comparison`** 등으로 순위를 정리합니다. 통합 전략에는 **`operational_decision_card`**(`mas/intelligence/operational_decision_card.py`)가 붙을 수 있습니다.
+- **Planning Agent** 내부 모듈: `mas/agents/planning_sub/`(수집·순위·평가·리포트), QA 보조: `mas/agents/qa_sub/`(스텁 확장용).
 - **Planning Agent**는 `run_cycle_with_router` 경로에서 CNP 분기 시 동일한 프로토콜을 사용합니다(`mas/agents/planning_agent.py`, `mas/runtime/factory_runtime.py`).
 
 ---
@@ -205,7 +208,7 @@ sequenceDiagram
 
 - **브로커**: 에이전트 간 메시지와 메트릭의 중심. API의 SSE는 브로커 콜백으로 이벤트를 밀어 넣습니다.
 - **MQTT**: 실제 브로커가 없으면 “내부 모드”로 동작해도 **시뮬 로직은 동일**합니다.
-- **LLM**: PA의 전략/CNP 평가 등에 사용. 키 없으면 규칙 분기.
+- **LLM**: PA의 전략/CNP 평가 등에 사용. 키 없으면 규칙 분기. `LLMClient`는 호출 메타를 **`audit_log`**(상한 있음)에 누적합니다.
 - **API**: 공장 스냅샷·KPI·에이전트 상태·브로커 메트릭 조회 및 실시간 메시지 스트림.
 
 ---
@@ -239,8 +242,8 @@ sequenceDiagram
 ## 11. CNP(협상) 흐름
 
 1. PA가 스냅샷·수신 알림을 보고 **CNP 개시** 조건이면 `initiate_cnp: True`.
-2. 다른 에이전트에 **CFP**에 해당하는 제안 요청 → 각자 `handle_cfp`로 제안.
-3. PA가 점수/규칙/LLM으로 **통합 전략** 결정 → 라인 속도 등 적용.
+2. 다른 에이전트에 **CFP**에 해당하는 제안 요청 → 각자 `handle_cfp`로 제안(`merge_into_proposal`로 비교 메트릭 선택적 병합).
+3. PA가 점수/규칙/LLM으로 **통합 전략** 결정 → `operational_decision_card`·`pa_report_lines` 등 포함 가능 → 라인 속도 등 적용.
 
 세부 의도 타입은 `mas/message.py`의 `Intent`와 브로커 토픽 매핑을 따릅니다.
 
@@ -267,7 +270,8 @@ sequenceDiagram
 | `mas/messaging/` | 메시지·브로커·MQTT |
 | `mas/agents/` | `BaseAgent` 및 6종 에이전트 |
 | `mas/intelligence/` | LLM·라우터·솔버·도메인 추론 |
-| `mas/protocol/` | CNP 세션, SRA, LangGraph(`sra_langgraph`) |
+| `mas/protocol/` | CNP 세션, SRA, LangGraph(`sra_langgraph`), `cnp_comparison` |
+| `mas/adapters/` | 외부 시스템 연동용 Protocol 정의(`base.py`) |
 | `mas/runtime/` | `factory_runtime`(FactoryRuntime·콘솔), `scenario_runtime`(AgentRuntime) |
 | `mas/scenario/` | YAML → `ScenarioConfig` (`loader.py`) |
 | `mas/tools/` | ToolRegistry, mock_models |

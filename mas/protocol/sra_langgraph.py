@@ -13,6 +13,7 @@ from langgraph.graph import END, START, StateGraph
 from typing_extensions import TypedDict
 
 from ..agents.base_agent import BaseAgent, AgentState
+from ..domain.agent_snapshot import enrich_snapshot_for_agents
 from ..intelligence.snapshot_enrichment import enrich_snapshot_for_router
 
 LogFn = Callable[[str, str, str], None]
@@ -117,7 +118,8 @@ def invoke_sra_graph(
         _graph_cache[key] = _build_graph(agent, decision_router, log_fn, broker)
 
     graph = _graph_cache[key]
-    final: SRAState = graph.invoke({"snapshot": snapshot})
+    snap = enrich_snapshot_for_agents(dict(snapshot))
+    final: SRAState = graph.invoke({"snapshot": snap})
     return final.get("decision")
 
 

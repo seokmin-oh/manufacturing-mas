@@ -22,6 +22,7 @@ from typing import Dict, List, Optional
 from .base_agent import BaseAgent
 from .equipment_sub import compute_raw_anomaly, estimate_rul_hours, trim_history
 from ..messaging.message import Intent
+from ..protocol.cnp_comparison import merge_into_proposal
 from ..intelligence.equipment_predictive_models import (
     model_catalog,
     profile_for_station_type,
@@ -148,6 +149,11 @@ class EquipmentAgent(BaseAgent):
                 "worst_sensor": worst_sn or "-",
             }
 
+        mc = snapshot.get("manufacturing_context")
+        if isinstance(mc, dict):
+            observations["kpi_by_station_ctx"] = (mc.get("kpi_slices") or {}).get("by_station") or {}
+        observations["business_events_tail"] = snapshot.get("business_events") or []
+
         return observations
 
     def reason(self, obs: Dict) -> Optional[Dict]:
@@ -233,7 +239,7 @@ class EquipmentAgent(BaseAgent):
         wr = float(worst_station[1]) if worst_station[0] is not None else 999.0
         cost_est = max(0.0, min(1.0, 1.0 - min(wr, 120.0) / 120.0))
         viol = 1.0 if wr < self.RUL_LOW_HOURS else (0.5 if wr < self.RUL_CNP_HOURS else 0.0)
-        return {
+        out = {
             "agent": self.agent_id,
             "proposal": "설비 관점 대응",
             "speed_recommendation": self.SPEED_WARNING_PCT if worst_station[1] < self.RUL_CNP_HOURS else 100,
@@ -249,8 +255,15 @@ class EquipmentAgent(BaseAgent):
                 "cost_estimate": round(cost_est, 4),
                 "constraint_violation_total": viol,
                 "rul_worst_hours": round(wr, 2),
+                "expected_effect": round(1.0 - cost_est, 4),
+                "quality_risk": 0.35,
+                "delivery_impact": 0.1,
+                "material_impact": 0.15,
+                "confidence": 0.75,
             },
         }
+        merge_into_proposal(out)
+        return out
 
     def execute_accepted_proposal(self, proposal: Dict):
         for ma in proposal.get("maintenance_needed", []):

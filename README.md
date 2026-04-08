@@ -11,6 +11,9 @@
 - **하이브리드 의사결정** — 안전·임계 상황은 규칙, 복합 상황만 조건부 LLM 활용
 - **실시간 대시보드** — FastAPI + SSE 기반 웹 모니터링 (OEE, KPI, 에이전트 상태)
 - **YAML 시나리오** — 정상/설비고장/품질위기/자재부족/수요폭주/복합위기 6종
+- **표준 제조 컨텍스트(v2)** — `ManufacturingContext` 계약, Sense 직전 `enrich_snapshot_for_agents`로 스냅샷 보강
+- **비즈니스 이벤트·CNP 비교** — `business_events` 테일, `cnp_comparison.merge_into_proposal`로 제안에 비교 메트릭 병합
+- **운영 의사결정 카드** — CNP 전략에 `operational_decision_card`(스키마 `operational_decision_card/v1`) 포함
 
 ## 시스템 구조
 
@@ -73,7 +76,7 @@ python main.py
 
 ```bash
 # 시나리오 목록 확인
-python run_scenario.py --list-scenarios
+python run_scenario.py --list
 
 # 특정 시나리오 실행 (결과 JSON 자동 저장)
 python run_scenario.py --scenario scenarios/equipment_failure.yaml --cycles 100
@@ -98,11 +101,12 @@ Multi-Agent/
 ├── compare_results.py         # 시나리오 결과 비교
 │
 ├── mas/                       # 메인 패키지
-│   ├── domain/                # 공장 시뮬레이션 (Factory, 센서, 재고, 주문)
-│   ├── agents/                # 6종 에이전트 (EA, QA, SA, DA, IA, PA)
+│   ├── domain/                # Factory, 센서, 재고, manufacturing_context, business_events, agent_snapshot
+│   ├── agents/                # 6종 에이전트 + planning_sub / qa_sub (내부 모듈)
+│   ├── adapters/              # 외부 연동 경계용 Protocol 스텁 (센서·MES·ERP 등)
 │   ├── messaging/             # MessageBroker, MQTT 브릿지
-│   ├── intelligence/          # LLM 클라이언트, 의사결정 라우터, 최적화
-│   ├── protocol/              # CNP 세션, SRA 프로토콜, LangGraph 래퍼
+│   ├── intelligence/          # LLM(감사 로그), 라우터, 최적화, operational_decision_card
+│   ├── protocol/              # CNP 세션, SRA, LangGraph, cnp_comparison(대안 비교 블록)
 │   ├── runtime/               # FactoryRuntime (스레드 관리, 틱 루프)
 │   ├── api/                   # FastAPI 서버 + 대시보드
 │   │   └── static/            # dashboard.html
@@ -118,7 +122,7 @@ Multi-Agent/
 │   ├── demand_surge.yaml      # 수요 폭주
 │   └── compound_crisis.yaml   # 복합 위기
 │
-├── tests/                     # 단위 + E2E 통합 테스트 (36개)
+├── tests/                     # 단위 + E2E·로드맵 통합 테스트 (pytest 수집 약 48개)
 │
 ├── pyproject.toml             # 패키지 메타데이터 + 빌드 설정
 ├── requirements.txt           # 런타임 의존성

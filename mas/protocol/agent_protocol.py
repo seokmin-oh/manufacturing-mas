@@ -27,6 +27,7 @@ _log = logging.getLogger(__name__)
 
 from .agentic_loop import ActionType, ThinkResult
 from ..agents.base_agent import BaseAgent, AgentState
+from ..domain.agent_snapshot import enrich_snapshot_for_agents
 from ..intelligence.snapshot_enrichment import enrich_snapshot_for_router
 
 AGENT_PROTOCOL_ID = "mas.sra.v2"
@@ -67,6 +68,7 @@ def _run_sra_sequential(
 ) -> Optional[Dict[str, Any]]:
     """LangGraph 없이 위 문서 순서대로 S+R+A 수행. 그래프 실패 시에도 이 경로로 수렴."""
 
+    snapshot = enrich_snapshot_for_agents(dict(snapshot))
     agent._snapshot = snapshot
     agent._cycle_count += 1
 

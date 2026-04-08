@@ -168,7 +168,7 @@
 
 - **6공정** `line` (예: WC-01 … WC-06), 센서·OEE·상태 머신.
 - **`run_cycle()`** — 생산 1스텝/시뮬 시간 진행.
-- **`get_snapshot()`** — 에이전트·API용 딕셔너리: `stations`, `materials`, `avg_oee`, `cycle`, `clock`, 주문 등.
+- **`get_snapshot()`** — 에이전트·API용 딕셔너리: `stations`, `materials`, `avg_oee`, `cycle`, `clock`, 주문 등. **`business_events`** 키로 최근 비즈니스 이벤트 테일이 포함될 수 있습니다 (`BusinessEventStore`, `mas/domain/business_events.py`).
 - **`get_kpi_summary()`** — OEE, FPY, 납기, 에너지 등.
 
 ### 5.1 현장 연동 없이 “데이터만” 실제에 가깝게 (`plant_data_model`)
@@ -235,12 +235,13 @@ PLC·OPC를 붙이기 전에도, 스냅샷을 **히스토리안/MES에 넣었을
 
 **흐름:** `run_cycle_with_router(agent, snapshot, decision_router, log_fn, broker)`
 
-1. **Sense** — `agent.sense(snapshot)`  
-2. **관측 보강** — `observations["new_alerts"]` 등 설정  
-3. **스냅샷 보강** — `enrich_snapshot_for_router(snapshot)` (`mas/intelligence/snapshot_enrichment.py`)  
-4. **HybridDecisionRouter.route(agent_id, observations, enriched)**  
-5. **Reason** — `agent.reason(observations)`  
-6. **Act** — `agent.act(decision)`
+1. **스냅샷 보강(에이전트)** — `snapshot = enrich_snapshot_for_agents(dict(snapshot))` (`mas/domain/agent_snapshot.py`) — `manufacturing_context`·수집 시각 등  
+2. **Sense** — `agent.sense(snapshot)`  
+3. **관측 보강** — `observations["new_alerts"]` 등  
+4. **스냅샷 보강(라우터)** — `enriched = enrich_snapshot_for_router(snapshot)` (`mas/intelligence/snapshot_enrichment.py`)  
+5. **HybridDecisionRouter.route(agent_id, observations, enriched)**  
+6. **Reason** — `agent.reason(observations)`  
+7. **Act** — `agent.act(decision)`
 
 **LangGraph:** `MAS_USE_LANGGRAPH=1` 이고 `langgraph` 사용 가능 시 `mas/protocol/sra_langgraph.py`의 그래프 실행.  
 **폴백:** `_run_sra_sequential` — 위와 동일한 단계를 순차 실행.
@@ -267,6 +268,8 @@ PLC·OPC를 붙이기 전에도, 스냅샷을 **히스토리안/MES에 넣었을
 | **A. CNP 근거** | `PlanningAgent._build_strategy_llm` | `evaluate_proposals` → 솔버 수치 + `rationalize_cnp_decision` | 수치·승자는 **솔버 고정**, LLM은 문장·리스크 |
 | **B. 라우터 상황 분석** | `HybridDecisionRouter._route_to_llm` | `analyze_situation` | JSON 권고·심각도 등, **설비 직접 명령 아님** |
 
+**감사:** 주요 호출은 `LLMClient._audit()` → `audit_log`(최대 길이 상한 있음)에 메타가 누적됩니다.
+
 `MAS_LLM_DOMAIN_MODEL`은 **저장·상태 표시용**이며, **자동으로 두 번째 모델을 호출하는 분기는 현재 없음**.
 
 ---
@@ -276,10 +279,11 @@ PLC·OPC를 붙이기 전에도, 스냅샷을 **히스토리안/MES에 넣었을
 **PA:** `mas/agents/planning_agent.py`
 
 - `reason`에서 조건 충족 시 `initiate_cnp: true` 등.
-- `initiate_cnp`: `CNPSession`, CFP 브로커 발행, 타 에이전트 `handle_cfp`로 제안 수집, 점수 정렬, **`_build_strategy`**  
+- `initiate_cnp`: `CNPSession`, CFP 브로커 발행, 타 에이전트 `handle_cfp`로 제안 수집 — EA·QA 등은 **`mas/protocol/cnp_comparison.merge_into_proposal`** 로 제안에 **`comparison`** 블록을 병합할 수 있음. PA는 **`rank_proposals_by_comparison`**(`mas/agents/planning_sub/`)으로 순위 정리 후 **`_build_strategy`**.  
   - LLM 활성 시 `_build_strategy_llm` → `llm.evaluate_proposals`.
+- 전략에 **`operational_decision_card`** (`mas/intelligence/operational_decision_card.py`, 스키마 `operational_decision_card/v1`) 및 `pa_report_lines` 등이 붙을 수 있음.
 
-**런타임:** `FactoryRuntime._run_pa`에서 CNP 완료 후 `target_speed_pct`로 라인 속도 반영.
+**런타임:** `FactoryRuntime._run_pa` / 시나리오 런타임에서 CNP 호출 시 **`enrich_snapshot_for_agents`** 적용 스냅샷을 넘기며, 완료 후 `target_speed_pct`로 라인 속도 반영.
 
 ---
 
@@ -328,11 +332,12 @@ PLC·OPC를 붙이기 전에도, 스냅샷을 **히스토리안/MES에 넣었을
 
 ```
 mas/
-  core/           config, logging
-  domain/         Factory, machines, inventory, demand …
-  agents/         6종 에이전트 + base_agent, planning_agent …
-  intelligence/   llm, decision_router, control_matrix, snapshot_enrichment, optimization_engine …
-  protocol/       agent_protocol, sra_langgraph, cnp_session, contract_net …
+  core/           config, logging, manufacturing_ids
+  domain/         Factory, machines, inventory, demand, manufacturing_context, business_events, agent_snapshot …
+  agents/         6종 + base_agent, planning_agent, equipment_sub/, planning_sub/, qa_sub/
+  adapters/       외부 연동 Protocol (base 등)
+  intelligence/   llm(audit_log), decision_router, operational_decision_card, control_matrix, snapshot_enrichment, optimization_engine …
+  protocol/       agent_protocol, sra_langgraph, cnp_session, cnp_comparison, contract_net …
   runtime/        factory_runtime, scenario_runtime
   messaging/      broker, message, mqtt_bridge
   api/            server (FastAPI + 대시보드 HTML)

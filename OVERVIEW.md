@@ -67,7 +67,7 @@
 ### 평소 (정상 상태)
 
 ```
-매 2.5초마다:
+매 택트(기본 약 2초, `MAS_TAKT_SEC`)마다:
   공장 → 부품 1개 생산 → 검사 → 양품이면 창고 입고 → 주문 있으면 출하
 
 동시에:
@@ -317,7 +317,7 @@ python main.py
 python run_scenario.py --scenario scenarios/equipment_failure.yaml
 
 # 사용 가능한 시나리오 목록 확인
-python run_scenario.py --list-scenarios
+python run_scenario.py --list
 ```
 
 ### 시나리오 자동 실행 (결과 저장 + 비교)

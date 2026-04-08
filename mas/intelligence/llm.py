@@ -184,6 +184,8 @@ class LLMClient:
         }
         self.call_log: List[Dict[str, Any]] = []
         self._max_call_log = 200
+        self.audit_log: List[Dict[str, Any]] = []
+        self._max_audit_log = 300
 
         resolved_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         if not resolved_key:
@@ -196,6 +198,13 @@ class LLMClient:
                 self.enabled = True
             except Exception as e:
                 self.fallback_reason = str(e)
+
+    def _audit(self, kind: str, meta: Dict[str, Any]) -> None:
+        """프롬프트·컨텍스트·허용 필드 메타 감사 (수치 결정은 기록하지 않음)."""
+        entry = {"kind": kind, "ts": time.time(), **meta}
+        self.audit_log.append(entry)
+        if len(self.audit_log) > self._max_audit_log:
+            self.audit_log = self.audit_log[-self._max_audit_log // 2 :]
 
     # ── 내부 호출 ─────────────────────────────────────────────
 
@@ -234,6 +243,15 @@ class LLMClient:
 
             content = resp.choices[0].message.content
             result = json.loads(content)
+            self._audit(
+                "chat_completion_json",
+                {
+                    "model": use_model,
+                    "prompt_chars": len(system) + len(user),
+                    "response_keys": list(result.keys()) if isinstance(result, dict) else [],
+                    "allowed_surface": "strategy_rationale_only",
+                },
+            )
 
             elapsed = round(time.time() - t0, 2)
             entry: Dict[str, Any] = {
@@ -287,6 +305,15 @@ class LLMClient:
                 self.token_usage["total_tokens"] += usage.total_tokens
             self.token_usage["calls"] += 1
             content = (resp.choices[0].message.content or "").strip()
+            self._audit(
+                "chat_completion_text",
+                {
+                    "model": use_model,
+                    "prompt_chars": len(system) + len(user),
+                    "response_chars": len(content),
+                    "allowed_surface": "monitoring_qa",
+                },
+            )
             elapsed = round(time.time() - t0, 2)
             self.call_log.append(
                 {

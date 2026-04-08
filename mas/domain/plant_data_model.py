@@ -12,10 +12,12 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-PLANT_SCHEMA_VERSION = "1.0"
+PLANT_SCHEMA_VERSION = "2.0"
 
 DEFAULT_SITE_ID = "SITE-KR-01"
+DEFAULT_PLANT_ID = "PLANT-BRAKE-MAIN"
 DEFAULT_LINE_ID = "LINE-BRAKE-01"
+DEFAULT_CELL_ID = "CELL-LINE-01"
 
 
 def make_sensor_tag_id(
@@ -86,12 +88,16 @@ def plant_header(
     sim_time_sec: float,
     cycle: int,
     site_id: str = DEFAULT_SITE_ID,
+    plant_id: str = DEFAULT_PLANT_ID,
     line_id: str = DEFAULT_LINE_ID,
+    cell_id: str = DEFAULT_CELL_ID,
 ) -> Dict[str, Any]:
     return {
         "schema_version": PLANT_SCHEMA_VERSION,
         "site_id": site_id,
+        "plant_id": plant_id,
         "line_id": line_id,
+        "cell_id": cell_id,
         "snapshot_kind": "simulation",
         "sim_time_sec": round(float(sim_time_sec), 3),
         "logical_clock_cycle": int(cycle),

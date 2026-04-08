@@ -29,6 +29,7 @@ from typing import Dict, List, Optional, Tuple
 
 _log = logging.getLogger(__name__)
 
+from ..domain.agent_snapshot import enrich_snapshot_for_agents
 from ..domain.environment import Factory, CustomerOrder, OrderPriority
 from ..domain.machines import MachineState
 from ..agents.base_agent import BaseAgent
@@ -335,7 +336,7 @@ class FactoryRuntime:
             self._log("PA", f"CNP #{pa.cnp_count + 1} 시작: {decision.get('cnp_reason', '')}", "CNP")
 
             agents_list = [a for a in self.agents.values() if a.agent_id != "PA"]
-            strategy = pa.initiate_cnp(agents_list, snap)
+            strategy = pa.initiate_cnp(agents_list, enrich_snapshot_for_agents(dict(snap)))
 
             if strategy:
                 self.cnp_count = pa.cnp_count

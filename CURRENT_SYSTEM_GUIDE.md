@@ -4,7 +4,7 @@
 > 세부 스펙·환경 변수 전체·프로토콜 ID는 **`MAS_SYSTEM_REFERENCE.md`**, 다이어그램·역사는 **`ARCHITECTURE.md`**, 비기술 요약은 **`OVERVIEW.md`** 를 참고하세요.
 
 **버전**: 패키지 `mas.__version__` = **5.0.0**  
-**마지막 문서 갱신**: 2026-04-07 (저장소 코드 기준)
+**마지막 문서 갱신**: 2026-04-08 (저장소 코드 기준)
 
 ---
 
@@ -42,9 +42,10 @@
 |------|------|
 | **`mas/domain/`** | 공장 환경 `Factory`, 워크센터·센서, 수요·재고, `manufacturing_context`, `plant_data_model` |
 | **`mas/messaging/`** | `MessageBroker`, 메시지 봉투, (선택) **MQTT** 브릿지 |
-| **`mas/agents/`** | 6종 에이전트 구현, `BaseAgent`, `equipment_sub/`(이상·RUL 등) |
-| **`mas/intelligence/`** | `HybridDecisionRouter`, `LLMClient`, 스냅샷 보강, `monitoring_qa`, `mas_overview`, `collaboration_view`, 제어·팀 레지스트리 등 |
-| **`mas/protocol/`** | SRA 루프, CNP 세션, LangGraph 경로 등 |
+| **`mas/agents/`** | 6종 에이전트, `BaseAgent`, `equipment_sub/`, `planning_sub/`, `qa_sub/` |
+| **`mas/adapters/`** | 외부 연동 경계용 Protocol (`base.py` 등) |
+| **`mas/intelligence/`** | `HybridDecisionRouter`, `LLMClient`(**`audit_log`**), 스냅샷 보강, `operational_decision_card`, `monitoring_qa`, `mas_overview`, `collaboration_view`, 제어·팀 레지스트리 등 |
+| **`mas/protocol/`** | SRA, CNP 세션, LangGraph, **`cnp_comparison`**(제안 비교 블록 병합) |
 | **`mas/runtime/`** | **`FactoryRuntime`** (스레드·틱·에이전트 루프), 시나리오 런타임 |
 | **`mas/scenario/`** | YAML 로더 등 |
 | **`mas/tools/`** | 모형·도구 |
@@ -106,7 +107,9 @@ flowchart TB
 - **`Factory`** (`mas/domain/environment.py`)가 **6공정 `line`**, 교대, 자재, WIP, 주문, KPI를 갱신합니다.
 - **`get_snapshot()`** 이 에이전트·API용 **단일 스냅샷**을 만듭니다.  
   - JSON 직렬화 호환을 위해 **`mtbf`** 가 고장 이력 없을 때 `null`, 자재 **`days_supply`** 가 비유한일 때 `null` 로 나가도록 처리되어 있습니다 (Starlette `JSONResponse` 는 `inf`/`nan` 비허용).
-- **`manufacturing_context`** (`mas/domain/manufacturing_context.py`)는 스냅샷에서 plant·시간축·공정 ID·SKU 등 **문서/외부 연동용** 얇은 뷰입니다.
+  - **`business_events`**: `Factory`에 **`BusinessEventStore`**(`mas/domain/business_events.py`)가 붙어 있으며, 스냅샷·에이전트 Sense에 **최근 이벤트 테일**로 노출됩니다.
+- **`manufacturing_context`** (`mas/domain/manufacturing_context.py`)는 **`CONTEXT_CONTRACT_VERSION`(현재 2.0)** 과 함께 `identifiers`(site/plant/line/cell·station·equipment·SKU·LOT·order·shift), `temporal`(논리 사이클·sim 시각·`event_time_utc_iso`·`ingest_time_utc_iso`), `kpi_slices`(line / by_station / by_shift / by_sku)를 담는 **1급 표준 계약**입니다. `from_factory_snapshot()` 으로 `Factory.get_snapshot()` 을 변환합니다.
+- **에이전트 입력 보강**: `enrich_snapshot_for_agents()` (`mas/domain/agent_snapshot.py`)가 Sense 직전에 호출되어 스냅샷에 **`manufacturing_context`** 및 수집 시각을 붙입니다. 이어서 **`enrich_snapshot_for_router()`** 가 라우터용 파생 지표를 추가합니다 (`mas/protocol/agent_protocol.py`).
 
 ### 4.2 런타임
 
@@ -117,7 +120,7 @@ flowchart TB
 ### 4.3 에이전트 한 사이클 (SRA + 라우터)
 
 - 경로: **`mas/protocol/agent_protocol.py`** 의 **`run_cycle_with_router`**.
-- 순서 요약: **Sense** → 스냅샷 보강(`snapshot_enrichment`) → **`HybridDecisionRouter.route`** (규칙 우선, 조건부 LLM) → **Reason** → **Act**.
+- 순서 요약: **`enrich_snapshot_for_agents`** → **Sense** → **`enrich_snapshot_for_router`** → **`HybridDecisionRouter.route`** (규칙 우선, 조건부 LLM) → **Reason** → **Act**.
 - **LangGraph** (`mas/protocol/sra_langgraph.py`): 그래프는 `sense → enrich → router → reason → act` **선형** 워크플로로 컴파일되어 한 사이클과 순차 SRA가 동등합니다.  
   - **`MAS_USE_LANGGRAPH=1`**(기본)이고 `langgraph` 패키지가 있으면 그래프 경로, **`ImportError`·그래프 실행 중 예외**면 **자동으로 순차 SRA로 폴백**합니다(운영 안정성).  
   - 그래프는 에이전트·라우터·브로커·`log_fn` 조합별로 **캐시**되며, `log_fn`은 클로저에 묶이므로 캐시 키에 포함됩니다.  
@@ -126,7 +129,7 @@ flowchart TB
 ### 4.4 브로커·CNP
 
 - 메시지는 **`MessageBroker`** 를 경유합니다.
-- **PA**가 필요 시 **CNP**로 타 에이전트 제안을 모아 전략을 확정하는 흐름이 `PlanningAgent`·프로토콜 모듈에 구현되어 있습니다.
+- **PA**가 필요 시 **CNP**로 타 에이전트 제안을 모아 전략을 확정합니다. 제안에는 **`cnp_comparison.merge_into_proposal`** 로 **`comparison`** 메트릭이 붙을 수 있고, `planning_sub`의 **`rank_proposals_by_comparison`** 으로 순위를 정리합니다. 전략에는 **`operational_decision_card`** (`operational_decision_card/v1`)가 포함될 수 있습니다.
 
 ### 4.5 API·대시보드
 
@@ -197,7 +200,7 @@ flowchart TB
 
 | JSON 키 | 의미(요약) |
 |---------|------------|
-| `manufacturing_context` | plant, temporal, station_ids, material_skus, meta |
+| `manufacturing_context` | `contract_version`, `identifiers`, `temporal`, `kpi_slices`, `plant`, `summary`, `meta` |
 | `factory` | 스냅샷에서 뽑은 요약 필드 |
 | `agents` | 각 `get_agent_status()` (서브 뷰 등 포함 가능) |
 | `broker`, `llm`, `decision_router`, `runtime` | 상태·메트릭 |
@@ -251,8 +254,8 @@ flowchart TB
 
 ## 12. 테스트
 
-- **`tests/`** 에 pytest 기반 검증 (설정, 브로커, manufacturing_context, monitoring_qa, collaboration_view, 시나리오 등).
-- 대시보드 HTML/JS는 별도 프론트 빌드가 없어 E2E는 수동·추가 스모크 테스트 여지 있음.
+- **`tests/`** 에 pytest 기반 검증 (설정, 브로커, manufacturing_context, E2E 런타임, **`test_roadmap_integration`** — 컨텍스트·CNP 비교·운영 카드 등, 시나리오 등). `pytest --collect-only` 기준 **약 48개** 테스트.
+- 대시보드 HTML/JS는 별도 프론트 빌드가 없어 브라우저 E2E는 수동·추가 스모크 여지 있음.
 
 ---
 

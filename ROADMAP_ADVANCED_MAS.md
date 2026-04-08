@@ -19,6 +19,115 @@
 
 ---
 
+## 0.5 통합 제품 로드맵 — 9대 축 (추천형 운영 MAS)
+
+아래는 **단일 뷰가 아니라 전체 시스템의 1급 데이터·행위 계약**으로 수렴시키기 위한 축이다. 기존 §1~§5 및 Phase A~F와 **1:1 대응**하며, 구현 시 이 절을 우선 만족시키는지 검토한다.
+
+### 축 1 — `ManufacturingContext`를 “1급 표준 계약”으로 격상
+
+| 항목 | 목표 |
+|------|------|
+| **식별자 고정 키** | `site` → `plant` → `line` → `cell` → `station` → `equipment` 및 `SKU` / `LOT` / `order` / `shift` 를 스키마에 **필수·옵션 구분**까지 명시 (공장이 바뀌어도 에이전트 재사용). |
+| **시간 축 분리** | `sim_time` 단일에 의존하지 않고 **`event_time`(비즈니스 시각) / `ingest_time`(수집 시각) / `logical_cycle`(틱·사이클)** 를 분리해 기록·집계. |
+| **KPI 슬라이스** | 공정 / 설비 / 품번 / 시프트 단위로 slice 키를 명시 (집계 단위가 모호하면 추천·알람 우선순위가 흔들림). |
+| **에이전트 입력** | Raw `get_snapshot()` 딕셔너리 직접 의존을 줄이고, **`ManufacturingContext` 뷰(또는 그 상위 버전)만** Sense 단계에서 주입 — §2·`manufacturing_context.py` 확장과 동일 선상. |
+
+**수용 기준(예):** `/api/monitoring` 페이로드가 아니라 **코드 상 계약**으로 `TypedDict`/Pydantic 스키마 버전(`schema_version`)이 있고, 어댑터만 갈아끼우면 실공장 데이터가 들어온다.
+
+### 축 2 — 상태(State)와 이벤트(Event) 분리
+
+- `factory_tick` 외에 **작업 시작/완료, 검사 판정, 설비 알람 전이** 등을 별도 **이벤트 스트림(큐 → 추후 테이블)** 으로 둔다.
+- 에이전트 판단은 “현재값”만이 아니라 **최근 윈도우의 추세·전이·원인 후보 맥락**을 쓸 수 있게 한다 (예: 진동 “높음” vs “2시간 상승 추세”, 불량률 “높음” vs “점검 후 급변”).
+- §2.2의 “이벤트 로그 vs 상태 스냅샷” 및 Phase C와 정합.
+
+### 축 3 — 부서 에이전트 → 업무 단위 서브 에이전트 (EA·QA 우선)
+
+- **EA:** 이상 감지, RUL, 예방정비 추천, 공정조건 최적화 등 **업무 단위 모듈**로 분해.
+- **QA:** SPC, 비전(또는 검사 채널), 원인 추정, 확산 차단 등 동일.
+- **전개 순서:** 한 클래스 내부 모듈화(A) → 경량 객체 페더레이션(B) → 필요 시 브로커 ID 분리(C). **EA·QA가 추천 가치의 대부분**이므로 이 두 축을 먼저 §1.3 순서대로 진행.
+
+### 축 4 — CNP를 “전략 생성”이 아닌 “대안 비교 엔진”으로
+
+- CFP/Proposal은 **제어 명령**이 아니라 **추천 우선순위·대응안 선택**용으로 재정의한다.
+- 구조적 필드(솔버·규칙이 채움, LLM은 해석·설명만):
+
+| 필드 그룹 | 예시 |
+|-----------|------|
+| 후보 액션 | 추천 후보 액션 목록 |
+| 효과·비용 | 예상 효과, 예상 비용 |
+| 리스크·영향 | 품질 리스크, 납기 영향, 자재 영향 |
+| 제약 | 제약 위반량(하드/소프트 구분은 후속) |
+| 신뢰도 | 추천 신뢰도(점수 또는 구간) |
+
+- LLM은 **수치를 바꾸지 않고** 제약 해석, 설명, 대안 정리만 담당 — §3·기존 솔버 우선 원칙과 동일.
+
+### 축 5 — PA 집중 완화 및 계층형 오케스트레이션 여지
+
+- 단일 PA가 전역 스냅샷·CNP·라인 속도·전략 서술을 모두 떠안는 구조를 줄이고, **최소한 PA 내부 역할**을 명시한다:
+
+| 내부 역할(개념) | 역할 |
+|-----------------|------|
+| Alert collector | 교차 에이전트 알람·경보 통합 |
+| Recommendation ranker | 대안·우선순위 정렬 |
+| Constraint evaluator | 제약 위반·가능 영역 판정 |
+| Report generator | 요약·보고·사람용 메시지 |
+
+- 장기적으로 Local / Line / Plant 계층(§4)으로 확장 가능하도록 **메시지·의도(Intent) 경계**만 먼저 잡는다.
+
+### 축 6 — LLM 역할 제한·감사 강화
+
+- **허용 필드 화이트리스트:** LLM 출력이 갱신할 수 있는 JSON 필드만 허용 (나머지는 무시 또는 거부).
+- **수치 결정:** 항상 규칙/솔버 우선; LLM은 설명·라벨링·요약.
+- **감사 로그:** 프롬프트 해시, 컨텍스트 스키마 버전, 응답 요약, 호출 주체(에이전트 ID).
+- **RAG:** 설명·SOP 인용·리포트 중심; 제어 루프 직접 주입 금지 — §5와 정합.
+
+### 축 7 — 추천형 출력 스키마 (운영 의사결정 카드)
+
+프로토콜 메시지(ALERT/PROPOSE/…)만으로는 현장 운영 UI·연동에 부족하므로, **최종 사용자/운영자面向** 스키마를 별도 계층으로 둔다.
+
+| 필드 | 설명 |
+|------|------|
+| 이슈명 | 사람이 읽는 제목 |
+| 대상 | 공정 / 설비 / LOT / 품번 등 식별자 (축 1 키 참조) |
+| 심각도 / 영향 범위 / 우선순위 | 정렬·필터용 |
+| 추천 대응안 1·2·3 | 각각 기대효과·리스크 |
+| 제약 조건 | 위반 시 명시 |
+| 즉시 확인 항목 | 체크리스트 |
+| 담당 주체 | 역할 또는 서브 에이전트 |
+| 재검토 시점 | 다음 평가 시각 또는 사이클 |
+
+→ “알람 나열”이 아니라 **운영 추천 시스템** 출력으로 정의.
+
+### 축 8 — 외부 연동 어댑터 계층 명시
+
+MQTT 브리지·인메모리 브로커 위에, **소스 시스템별 어댑터**를 개념적으로 고정한다 (구현은 단계적).
+
+| 어댑터 | 역할 |
+|--------|------|
+| Sensor Adapter | 태그·시계열·진동 등 |
+| MES Adapter | 작업지시·실적·LOT |
+| ERP / Order Adapter | 주문·납기·자재 마스터 |
+| Quality / Inspection Adapter | 검사·SPC·판정 이력 |
+| Maintenance History Adapter | 정비·고장 이력 |
+| SOP / Document Adapter | 매뉴얼·절차서(RAG 소스) |
+
+MAS 코어는 **동일 컨텍스트 계약(축 1)** 만 보면 되게 한다.
+
+### 축 9 — 테스트 전략 보강
+
+| 테스트 유형 | 목적 |
+|-------------|------|
+| Agent protocol regression | SRA·라우터 변경 시 회귀 방지 |
+| Context schema contract | 스냅샷→컨텍스트 변환·버전 호환 |
+| CNP scenario golden | 동일 시나리오에서 제안 구조·순위 일관성 |
+| Recommendation ranking consistency | 순위 변경 시 추적 가능(시드·입력 해시) |
+| Adapter mock integration | 외부 API 모킹으로 코어 검증 |
+| UI smoke / monitoring payload | 대시보드·`/api/monitoring` JSON 스키마 호환 |
+
+추천 시스템은 단일 정답보다 **일관성·설명 가능성**이 중요하므로, “왜 순위가 바뀌었는지” 재현 가능한 테스트가 필수.
+
+---
+
 ## 1. 방향 1 — “부서 에이전트” → “업무 단위 서브 에이전트”
 
 ### 1.1 현재 상태
@@ -190,9 +299,20 @@ flowchart LR
 
 ## 7. 이 저장소에서 바로 잡을 “다음 스프린트” 후보 (짧게)
 
+**완료 (파일럿)**  
 - [x] `ManufacturingContext` — **`mas/domain/manufacturing_context.py`** + `from_factory_snapshot(snap)` 어댑터. `/api/monitoring` 에 `manufacturing_context` 키로 포함.  
 - [x] **EA 서브 모듈** — `mas/agents/equipment_sub/` (`anomaly`, `rul`), `get_agent_status["sub_agent_views"]` 에 **EA-AD / EA-RUL** 요약.  
 - [x] **CNP `proposal_metrics`** — EA 제안에 `cost_estimate`, `constraint_violation_total`, `rul_worst_hours`. PA가 `total_score` 에 위반량 소량 페널티(0.05×) 반영.
+
+**§0.5 9대 축 — 코드 반영 현황 (2026-04)**  
+- [x] **컨텍스트 1급 계약 (v2.0):** `IdentifierContract` + `TemporalAxes` + `KpiSliceBundle` + `CONTEXT_CONTRACT_VERSION` — `from_factory_snapshot(..., ingest_time_utc_iso=)` — `tests/test_manufacturing_context.py`.  
+- [x] **비즈니스 이벤트(메모리):** `BusinessEventStore`, 스냅샷·Sense용 `business_events` 테일 — `mas/domain/business_events.py`. (영속 큐·DB는 후속.)  
+- [x] **CNP 대안 비교:** `mas/protocol/cnp_comparison.py` — `merge_into_proposal`, `rank_proposals_by_comparison` (`planning_sub`).  
+- [x] **운영 의사결정 카드:** `operational_decision_card/v1` — `mas/intelligence/operational_decision_card.py`, CNP 전략에 포함.  
+- [x] **PA 내부 모듈:** `mas/agents/planning_sub/` (collector, ranker, evaluator, reporter 패턴).  
+- [x] **LLM 감사 로그:** `LLMClient.audit_log` + `_audit()` (`mas/intelligence/llm.py`).  
+- [x] **테스트 보강:** `tests/test_roadmap_integration.py`, E2E 등 (pytest 수집 약 48개).  
+- [ ] **남은 과제:** 제약 온톨로지·계층 PA·RAG·어댑터 실연동(현재 `mas/adapters/`는 Protocol 스텁), CNP golden 대규모 시나리오, monitoring 스키마 스모크 자동화.
 
 ---
 
@@ -201,9 +321,10 @@ flowchart LR
 | 질문 | 답 |
 |------|-----|
 | 구현 가능한가? | 예. 단계적으로. |
-| 무엇이 먼저인가? | **표준 컨텍스트(2)** 와 **한 축 서브 분해(1)** 가 다른 작업의 발판. |
-| CNP/솔버 철학을 바꿔야 하나? | 아니요. **제약·비용을 입력으로 넣고 솔버가 고정**하는 쪽으로 확장. |
-| LLM을 키우면 위험하지 않나? | **제어 경로에 넣지 않고**, RAG·설명·리포트로만 확장하면 기존 철학과 호환. |
+| 무엇이 먼저인가? | **표준 컨텍스트(2)** 와 **한 축 서브 분해(1)** 가 다른 작업의 발판. **제품 비전은 §0.5 9대 축** 과 함께 본다. |
+| CNP/솔버 철학을 바꿔야 하나? | **“있다”에서 한 단계 더:** 대안 비교·추천 우선순위 엔진(§0.5 축 4). 수치는 솔버·규칙이 고정. |
+| LLM을 키우면 위험하지 않나? | **제어 경로에 넣지 않고**, 허용 필드·감사 로그(§0.5 축 6)로만 확장. |
+| 현장 연동은? | **어댑터 계층(§0.5 축 8)** 으로 소스만 갈아끼우고 MAS 코어는 컨텍스트 계약 유지. |
 
 ---
 

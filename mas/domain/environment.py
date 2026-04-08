@@ -27,8 +27,11 @@ from typing import Dict, List, Optional, Tuple
 from .machines import (
     WorkCenter, MachineState, create_production_line, SensorReading,
 )
+from .business_events import BusinessEventStore, BusinessEventType
 from .plant_data_model import (
+    DEFAULT_CELL_ID,
     DEFAULT_LINE_ID,
+    DEFAULT_PLANT_ID,
     DEFAULT_SITE_ID,
     enrich_station_sensors,
     make_resource_id,
@@ -248,6 +251,9 @@ class Factory:
         self._product_counter = 0
         self._lot_counter = 1
 
+        # 비즈니스 이벤트 (스냅샷과 분리된 전이 로그)
+        self.event_store = BusinessEventStore()
+
     def _init_orders(self):
         customers = [
             ("현대자동차", "HMC"), ("기아자동차", "KIA"),
@@ -274,12 +280,26 @@ class Factory:
 
         self._update_ambient()
 
+        self.event_store.emit(
+            BusinessEventType.FACTORY_TICK,
+            self.cycle,
+            self.sim_time_sec,
+            {"cycle": self.cycle},
+        )
+
         self._product_counter += 1
         if self._product_counter % 200 == 1:
             self._lot_counter += 1
         product = Product(
             serial=f"SN-{self._product_counter:06d}",
             lot=f"LOT-{self._lot_counter:04d}",
+        )
+        self.event_store.emit(
+            BusinessEventType.WORK_STARTED,
+            self.cycle,
+            self.sim_time_sec,
+            {"serial": product.serial, "lot": product.lot},
+            lot_id=product.lot,
         )
 
         all_readings: Dict[str, Dict[str, SensorReading]] = {}
@@ -303,6 +323,18 @@ class Factory:
 
             is_good = self._judge_quality(station, readings, product)
             station.record_quality(is_good)
+            self.event_store.emit(
+                BusinessEventType.INSPECTION_VERDICT,
+                self.cycle,
+                self.sim_time_sec,
+                {
+                    "serial": product.serial,
+                    "station": station.station_id,
+                    "pass": is_good,
+                },
+                station_id=station.station_id,
+                lot_id=product.lot,
+            )
 
             if not is_good and product.status == ProductStatus.IN_PROCESS:
                 if random.random() < 0.3:
@@ -313,6 +345,18 @@ class Factory:
                     product.status = ProductStatus.SCRAP
                     self.scrap_count += 1
                     product.defect_codes.append(f"{station.station_id}_폐기")
+                self.event_store.emit(
+                    BusinessEventType.QUALITY_ESCALATION,
+                    self.cycle,
+                    self.sim_time_sec,
+                    {
+                        "serial": product.serial,
+                        "status": product.status.value,
+                        "defect_codes": list(product.defect_codes),
+                    },
+                    station_id=station.station_id,
+                    lot_id=product.lot,
+                )
                 break
 
         if product.status == ProductStatus.IN_PROCESS:
@@ -321,6 +365,13 @@ class Factory:
             self.fg_stock += 1
             self.total_produced += 1
             self.finished_goods.append(product)
+            self.event_store.emit(
+                BusinessEventType.WORK_COMPLETE,
+                self.cycle,
+                self.sim_time_sec,
+                {"serial": product.serial, "lot": product.lot, "status": "GOOD"},
+                lot_id=product.lot,
+            )
             self._process_shipments()
 
         self._consume_materials()
@@ -445,7 +496,9 @@ class Factory:
                 sim_time_sec=self.sim_time_sec,
                 cycle=self.cycle,
                 site_id=DEFAULT_SITE_ID,
+                plant_id=DEFAULT_PLANT_ID,
                 line_id=DEFAULT_LINE_ID,
+                cell_id=DEFAULT_CELL_ID,
             ),
             "cycle": self.cycle,
             "clock": clock,
@@ -477,6 +530,7 @@ class Factory:
                 }
                 for o in self.orders
             ],
+            "business_events": self.event_store.tail(48),
         }
 
     # ── 공장 KPI 요약 ────────────────────────────────────────

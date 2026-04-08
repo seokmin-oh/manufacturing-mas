@@ -86,7 +86,18 @@
 
 ---
 
-## 6. 관련 소스 파일
+## 6. PA·QA 내부 모듈 · CNP 비교 · 감사
+
+| 내용 | 파일 |
+|------|------|
+| PA — 제안 순위·보고 보조 | `mas/agents/planning_sub/` (`rank_proposals_by_comparison` 등) |
+| QA — SPC·비전 확장 스텁 | `mas/agents/qa_sub/` |
+| CNP 제안에 비교 메트릭 병합 | `mas/protocol/cnp_comparison.py` |
+| CNP 전략 → 운영 카드 | `mas/intelligence/operational_decision_card.py` |
+| 에이전트 스냅샷 보강 | `mas/domain/agent_snapshot.py` (`enrich_snapshot_for_agents`) |
+| LLM 호출 감사 로그 | `mas/intelligence/llm.py` — `LLMClient.audit_log` |
+
+## 7. 관련 소스 파일
 
 | 내용 | 파일 |
 |------|------|
@@ -98,7 +109,8 @@
 | LLM 클라이언트 | `mas/intelligence/llm.py` |
 | 라우터 | `mas/intelligence/decision_router.py` |
 | 설정 `MAS_LLM_*` | `mas/core/config.py`, `.env.example` |
+| 외부 연동 경계(Protocol) | `mas/adapters/base.py` |
 
 ---
 
-*공정 수나 유형을 바꾸면 `create_production_line`, `EQUIPMENT_PM_MODELS`, 대시보드/스냅샷을 함께 맞춰야 합니다 (`mas/core/manufacturing_ids.py` 의 `STATION_IDS` 참고).*
+*공정 수나 유형을 바꾸면 `create_production_line`, `EQUIPMENT_PM_MODELS`, 대시보드/스냅샷을 함께 맞춰야 합니다 (`mas/core/manufacturing_ids.py` 의 `STATION_IDS` 참고). 통합 동작은 `tests/test_roadmap_integration.py` 등에서 검증합니다.*

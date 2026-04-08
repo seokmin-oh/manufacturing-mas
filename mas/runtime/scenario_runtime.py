@@ -13,6 +13,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from ..domain.agent_snapshot import enrich_snapshot_for_agents
 from ..domain.environment import ProductStatus, CustomerOrder, OrderPriority
 from ..domain.demand import CustomerOrder as DemandCustomerOrder, OrderPriority as DemandOrderPriority
 from ..domain.machines import MachineState
@@ -299,7 +300,7 @@ class AgentRuntime:
             self._log("PA", f"CNP #{pa.cnp_count + 1} 시작: {decision.get('cnp_reason', '')}", "CNP")
 
             agents_list = [a for a in self.agents.values() if a.agent_id != "PA"]
-            strategy = pa.initiate_cnp(agents_list, snap)
+            strategy = pa.initiate_cnp(agents_list, enrich_snapshot_for_agents(dict(snap)))
 
             if strategy:
                 self.cnp_count = pa.cnp_count

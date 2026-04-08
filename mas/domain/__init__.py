@@ -4,10 +4,14 @@ from .environment import Factory, CustomerOrder, OrderPriority, Product, Product
 from .machines import WorkCenter, MachineState, create_production_line, SensorReading
 from .manufacturing_env import ManufacturingEnvironment
 from .manufacturing_context import (
+    CONTEXT_CONTRACT_VERSION,
+    FactorySummary,
+    IdentifierContract,
+    KpiSliceBundle,
     ManufacturingContext,
     PlantRef,
+    TemporalAxes,
     TemporalRef,
-    FactorySummary,
     from_factory_snapshot,
 )
 
@@ -22,8 +26,12 @@ __all__ = [
     "create_production_line",
     "SensorReading",
     "ManufacturingEnvironment",
+    "CONTEXT_CONTRACT_VERSION",
+    "IdentifierContract",
+    "KpiSliceBundle",
     "ManufacturingContext",
     "PlantRef",
+    "TemporalAxes",
     "TemporalRef",
     "FactorySummary",
     "from_factory_snapshot",
