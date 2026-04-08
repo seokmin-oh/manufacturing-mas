@@ -25,7 +25,8 @@ import logging
 import random
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 _log = logging.getLogger(__name__)
 
@@ -40,8 +41,15 @@ from ..core.logger import C
 from ..core.config import get_settings
 from ..protocol.agent_protocol import run_cycle_with_router
 from ..core.manufacturing_ids import AGENT_IDS
+from ..coordination import CellCoordinator, LineScheduler, PlantOrchestrator
+from ..integration import build_connector_status, build_connector_suite
+from .event_engine import EventStore, ExecutionCommandQueue, ManufacturingStateStore
 
 TAKT_SEC = get_settings().takt_sec
+RUNTIME_MODE = get_settings().runtime_mode
+CONNECTOR_POLL_SEC = get_settings().connector_poll_sec
+EVENT_DISPATCH_SEC = get_settings().event_dispatch_sec
+RUNTIME_DATA_DIR = "runtime_data"
 AGENT_INTERVALS = {"EA": 2, "QA": 3, "SA": 5, "DA": 4, "IA": 3, "PA": 2}
 if set(AGENT_INTERVALS.keys()) != set(AGENT_IDS):
     raise RuntimeError("AGENT_INTERVALS keys must match manufacturing_ids.AGENT_IDS")
@@ -71,6 +79,7 @@ class FactoryRuntime:
         mqtt=None,
         api=None,
         decision_router=None,
+        connector_suite=None,
     ):
         self.factory = factory
         self.broker = broker
@@ -79,6 +88,18 @@ class FactoryRuntime:
         self.mqtt = mqtt
         self.api = api
         self.decision_router = decision_router
+        self.line_scheduler = LineScheduler(line_id="LINE-BRAKE-01")
+        self.cell_coordinator = CellCoordinator(cell_id="CELL-LINE-01")
+        self.plant_orchestrator = PlantOrchestrator(
+            plant_id="PLANT-BRAKE-MAIN",
+            line_scheduler=self.line_scheduler,
+            cell_coordinator=self.cell_coordinator,
+        )
+        runtime_dir = Path(RUNTIME_DATA_DIR)
+        self.connector_suite = connector_suite or build_connector_suite()
+        self.event_store = EventStore(persist_path=str(runtime_dir / "event_log.jsonl"))
+        self.command_queue = ExecutionCommandQueue()
+        self.state_store = ManufacturingStateStore()
 
         self._running = False
         self._lock = threading.Lock()
@@ -92,20 +113,33 @@ class FactoryRuntime:
         self._cnp_in_progress = False
         self.start_time = 0.0
         self._last_monitor_push = 0.0
+        self._last_orchestration_packet: Dict[str, Any] = {}
+        self._pending_approval_packet: Dict[str, Any] = {}
+        self._last_connector_refresh = 0.0
+        self._last_pa_dispatch_at = 0.0
+        self._last_dispatched_event_id = ""
+        self._recovery_state: Dict[str, Any] = {"replayed_events": 0, "last_replayed_event_id": ""}
 
     @property
     def uptime(self) -> float:
         return time.time() - self.start_time if self.start_time else 0
 
     def start(self):
+        self._recover_from_event_log()
         self._running = True
         self.start_time = time.time()
         logger.quiet = True
 
-        threading.Thread(target=self._env_loop, daemon=True, name="ENV-TICK").start()
+        if RUNTIME_MODE in ("cycle", "hybrid"):
+            threading.Thread(target=self._env_loop, daemon=True, name="ENV-TICK").start()
         threading.Thread(target=self._event_loop, daemon=True, name="EVENT-GEN").start()
+        threading.Thread(target=self._connector_loop, daemon=True, name="CONNECTOR-POLL").start()
+        threading.Thread(target=self._event_dispatch_loop, daemon=True, name="EVENT-DISPATCH").start()
+        threading.Thread(target=self._execution_worker_loop, daemon=True, name="EXEC-WORKER").start()
 
         for aid in self.agents:
+            if aid == "PA" and RUNTIME_MODE == "event":
+                continue
             threading.Thread(
                 target=self._agent_loop, args=(aid,), daemon=True, name=f"AGENT-{aid}"
             ).start()
@@ -126,6 +160,108 @@ class FactoryRuntime:
             self._log_buffer.clear()
         return logs
 
+    def get_coordination_status(self) -> Dict[str, Any]:
+        with self._lock:
+            snapshot = copy.copy(self._snapshot) if self._snapshot else None
+        if not snapshot:
+            return {}
+        mctx = enrich_snapshot_for_agents(dict(snapshot)).get("manufacturing_context") or {}
+        agent_statuses = {
+            aid: agent.get_agent_status()
+            for aid, agent in self.agents.items()
+        }
+        coordination = self.plant_orchestrator.build_coordination_snapshot(
+            mctx,
+            agent_statuses=agent_statuses,
+        )
+        coordination["last_decision_packet"] = dict(self._last_orchestration_packet)
+        coordination["pending_approval_packet"] = dict(self._pending_approval_packet)
+        coordination["event_runtime"] = self.get_event_runtime_status()
+        return coordination
+
+    def get_event_runtime_status(self) -> Dict[str, Any]:
+        return {
+            "runtime_mode": RUNTIME_MODE,
+            "connector_poll_sec": CONNECTOR_POLL_SEC,
+            "event_dispatch_sec": EVENT_DISPATCH_SEC,
+            "recovery": dict(self._recovery_state),
+            "event_store": self.event_store.summary(),
+            "command_queue": self.command_queue.summary(),
+            "connector_status": build_connector_status(),
+            "state_store": self.state_store.build_runtime_view(
+                self.event_store.recent(limit=10),
+                self.command_queue.recent(limit=10),
+            ),
+        }
+
+    def get_last_orchestration_packet(self) -> Dict[str, Any]:
+        return dict(self._last_orchestration_packet)
+
+    def get_pending_approval_packet(self) -> Dict[str, Any]:
+        return dict(self._pending_approval_packet)
+
+    def approve_pending_packet(
+        self,
+        *,
+        approver: str,
+        note: str = "",
+    ) -> Dict[str, Any]:
+        if not self._pending_approval_packet:
+            return {"approved": False, "reason": "no_pending_packet"}
+        packet = dict(self._pending_approval_packet)
+        packet["approval"] = {
+            "status": "APPROVED",
+            "approver": approver,
+            "note": note,
+            "approved_at": time.time(),
+        }
+        self._pending_approval_packet = {}
+        self._last_orchestration_packet = dict(packet)
+        self.state_store.record_audit(
+            action="approval_approved",
+            actor=approver,
+            details={"note": note, "packet": dict(packet)},
+        )
+        self._record_event(
+            event_type="approval.approved",
+            source="HUMAN",
+            severity="INFO",
+            payload={"approver": approver, "note": note},
+        )
+        self._queue_execution_command(packet, actor=approver)
+        return {"approved": True, "packet": packet}
+
+    def reject_pending_packet(
+        self,
+        *,
+        approver: str,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        if not self._pending_approval_packet:
+            return {"rejected": False, "reason": "no_pending_packet"}
+        packet = dict(self._pending_approval_packet)
+        packet["approval"] = {
+            "status": "REJECTED",
+            "approver": approver,
+            "reason": reason,
+            "rejected_at": time.time(),
+        }
+        self._pending_approval_packet = {}
+        self._last_orchestration_packet = dict(packet)
+        self.state_store.record_audit(
+            action="approval_rejected",
+            actor=approver,
+            details={"reason": reason, "packet": dict(packet)},
+        )
+        self._record_event(
+            event_type="approval.rejected",
+            source="HUMAN",
+            severity="WARN",
+            payload={"approver": approver, "reason": reason},
+        )
+        self._log("PA", f"[REJECTED] by {approver}: {reason or 'no reason'}", "WARN")
+        return {"rejected": True, "packet": packet}
+
     # ── 환경 루프 ──────────────────────────────────────────
 
     def _env_loop(self):
@@ -133,6 +269,7 @@ class FactoryRuntime:
         while self._running:
             result = self.factory.run_cycle()
             snap = copy.deepcopy(self.factory.get_snapshot())
+            snap = self._refresh_runtime_state(snap)
             with self._lock:
                 self._snapshot = snap
 
@@ -159,6 +296,12 @@ class FactoryRuntime:
             if product and product.status.value == "폐기":
                 station = f"WC-{product.current_station + 1:02d}"
                 self._log("QA", f"폐기: {product.serial} at {STATION_SHORT.get(station, station)}", "WARN")
+                self._record_event(
+                    event_type="quality.scrap_detected",
+                    source="QA",
+                    severity="HIGH",
+                    payload={"serial": product.serial, "station_id": station},
+                )
 
             self._apply_dynamics()
 
@@ -176,6 +319,50 @@ class FactoryRuntime:
 
             time.sleep(TAKT_SEC)
 
+    def _connector_loop(self):
+        """Poll external systems independently from the simulation tick."""
+        while self._running:
+            time.sleep(max(CONNECTOR_POLL_SEC, 0.2))
+            with self._lock:
+                snap = copy.copy(self._snapshot) if self._snapshot else None
+            if not snap:
+                continue
+            refreshed = self._refresh_runtime_state(snap)
+            with self._lock:
+                self._snapshot = refreshed
+
+    def _event_dispatch_loop(self):
+        """React to important events without waiting for the periodic PA loop."""
+        while self._running:
+            time.sleep(max(EVENT_DISPATCH_SEC, 0.1))
+            latest_event = self.event_store.latest() or {}
+            event_id = str(latest_event.get("event_id") or "")
+            if not event_id or event_id == self._last_dispatched_event_id:
+                continue
+            self._last_dispatched_event_id = event_id
+            self._dispatch_runtime_event(latest_event)
+
+    def _execution_worker_loop(self):
+        """Process queued execution commands asynchronously."""
+        while self._running:
+            time.sleep(max(EVENT_DISPATCH_SEC, 0.1))
+            command = self.command_queue.next_queued()
+            if not command:
+                continue
+            self.command_queue.mark_status(command["command_id"], "IN_PROGRESS")
+            self.state_store.record_audit(
+                action="execution_started",
+                actor="EXEC",
+                details={"command_id": command["command_id"]},
+            )
+            self._record_event(
+                event_type="execution.command_started",
+                source="EXEC",
+                severity="INFO",
+                payload={"command_id": command["command_id"]},
+            )
+            self._execute_command(command)
+
     def _apply_dynamics(self):
         """틱마다 소프트한 물리: 센서 회복, 고장 수리 확률, 자재 자동 보충 등."""
         for station in self.factory.line:
@@ -187,6 +374,12 @@ class FactoryRuntime:
             if station.state == MachineState.BREAKDOWN and random.random() < 0.1:
                 station.complete_repair()
                 self._log("EA", f"{STATION_SHORT.get(station.station_id, station.station_id)} 수리 완료", "SUCCESS")
+                self._record_event(
+                    event_type="equipment.repair_completed",
+                    source="EA",
+                    severity="INFO",
+                    payload={"station_id": station.station_id},
+                )
 
         for mat in self.factory.materials.values():
             if mat.stock < mat.safety_stock and random.random() < 0.15:
@@ -194,6 +387,12 @@ class FactoryRuntime:
                 mat.stock += qty
                 self._log("SA", f"{mat.name} 입고 +{qty}", "EVENT")
                 self.total_events += 1
+                self._record_event(
+                    event_type="material.replenished",
+                    source="SA",
+                    severity="INFO",
+                    payload={"material": mat.name, "qty": qty},
+                )
 
     # ── 이벤트 루프 ────────────────────────────────────────
 
@@ -220,6 +419,12 @@ class FactoryRuntime:
                     name = STATION_SHORT.get(station.station_id, station.station_id)
                     self._log("EA", f"[정지] {name} 고장 발생 (예상복구 {repair / 60:.0f}분)", "ALERT")
                     self.total_events += 1
+                    self._record_event(
+                        event_type="equipment.breakdown_detected",
+                        source="EA",
+                        severity="CRITICAL",
+                        payload={"station_id": station.station_id, "repair_sec": repair},
+                    )
 
             elif event == "new_order":
                 order_counter += 1
@@ -233,6 +438,12 @@ class FactoryRuntime:
                 pri_kr = "긴급" if pri == OrderPriority.URGENT else "일반"
                 self._log("DA", f"신규 주문: {customer} +{qty}개 ({pri_kr})", "EVENT")
                 self.total_events += 1
+                self._record_event(
+                    event_type="order.created",
+                    source="DA",
+                    severity="HIGH" if pri == OrderPriority.URGENT else "INFO",
+                    payload={"customer": customer, "qty": qty, "priority": pri.name},
+                )
 
             elif event == "tool_wear_spike":
                 station = random.choice(self.factory.line)
@@ -241,6 +452,12 @@ class FactoryRuntime:
                 name = STATION_SHORT.get(station.station_id, station.station_id)
                 self._log("EA", f"{name} 공구 급마모 +{spike:.0f}회분", "WARN")
                 self.total_events += 1
+                self._record_event(
+                    event_type="equipment.tool_wear_spike",
+                    source="EA",
+                    severity="HIGH",
+                    payload={"station_id": station.station_id, "spike": spike},
+                )
 
             elif event == "quality_drift":
                 station = random.choice(self.factory.line)
@@ -250,6 +467,12 @@ class FactoryRuntime:
                 name = STATION_SHORT.get(station.station_id, station.station_id)
                 self._log("QA", f"{name} {sensor.name} 드리프트 +{drift:.2f}", "WARN")
                 self.total_events += 1
+                self._record_event(
+                    event_type="quality.drift_detected",
+                    source="QA",
+                    severity="HIGH",
+                    payload={"station_id": station.station_id, "sensor": sensor.name, "drift": drift},
+                )
 
             elif event == "material_arrival":
                 mat = random.choice(list(self.factory.materials.values()))
@@ -257,6 +480,12 @@ class FactoryRuntime:
                 mat.stock += qty
                 self._log("SA", f"{mat.name} 입고 +{qty}", "EVENT")
                 self.total_events += 1
+                self._record_event(
+                    event_type="material.arrival",
+                    source="SA",
+                    severity="INFO",
+                    payload={"material": mat.name, "qty": qty},
+                )
 
             elif event == "speed_recovery":
                 station = random.choice(self.factory.line)
@@ -266,12 +495,24 @@ class FactoryRuntime:
                     name = STATION_SHORT.get(station.station_id, station.station_id)
                     self._log("EA", f"{name} 속도복원 {old}%→{station.speed_pct}%", "EVENT")
                     self.total_events += 1
+                    self._record_event(
+                        event_type="equipment.speed_recovered",
+                        source="EA",
+                        severity="INFO",
+                        payload={"station_id": station.station_id, "from_pct": old, "to_pct": station.speed_pct},
+                    )
 
             elif event == "ambient_change":
                 self.factory.ambient_temp += random.gauss(0, 1.5)
                 self.factory.ambient_temp = max(15, min(38, self.factory.ambient_temp))
                 self._log("SYS", f"환경온도 변화: {self.factory.ambient_temp:.1f}°C", "INFO")
                 self.total_events += 1
+                self._record_event(
+                    event_type="environment.ambient_changed",
+                    source="SYS",
+                    severity="INFO",
+                    payload={"ambient_temp": self.factory.ambient_temp},
+                )
 
     # ── 에이전트 루프 ──────────────────────────────────────
 
@@ -293,7 +534,8 @@ class FactoryRuntime:
 
             try:
                 if agent_id == "PA":
-                    self._run_pa(agent, snap)
+                    if self._should_trigger_pa(snap):
+                        self._run_pa_with_orchestration(agent, snap)
                 else:
                     decision = run_cycle_with_router(
                         agent, snap,
@@ -352,6 +594,279 @@ class FactoryRuntime:
         else:
             if pa.reasoning_log:
                 self._log("PA", pa.reasoning_log[-1], "INFO")
+
+    def _run_pa_with_orchestration(self, pa: PlanningAgent, snap: Dict):
+        """New PA path that emits orchestration packets and enforces approval gating."""
+        decision = run_cycle_with_router(
+            pa, snap,
+            decision_router=self.decision_router,
+            log_fn=self._log,
+            broker=self.broker,
+        )
+
+        if decision and decision.get("initiate_cnp") and not self._cnp_in_progress:
+            self._cnp_in_progress = True
+            self._log("PA", f"CNP #{pa.cnp_count + 1} start: {decision.get('cnp_reason', '')}", "CNP")
+
+            agents_list = [a for a in self.agents.values() if a.agent_id != "PA"]
+            enriched_snapshot = enrich_snapshot_for_agents(dict(snap))
+            strategy = pa.initiate_cnp(agents_list, enriched_snapshot)
+
+            if strategy:
+                self.cnp_count = pa.cnp_count
+                latest_event = self.event_store.latest() or {}
+                if latest_event:
+                    strategy["trigger_event"] = latest_event.get("event_type")
+                packet = self.plant_orchestrator.issue_decision_packet(
+                    strategy,
+                    manufacturing_context=enriched_snapshot.get("manufacturing_context") or {},
+                )
+                self._last_orchestration_packet = dict(packet)
+                if packet.get("requires_approval"):
+                    self._pending_approval_packet = dict(packet)
+                    self.state_store.record_audit(
+                        action="approval_pending",
+                        actor="PA",
+                        details={"packet": dict(packet)},
+                    )
+                    self._record_event(
+                        event_type="approval.pending",
+                        source="PA",
+                        severity="HIGH",
+                        payload={"packet": dict(packet)},
+                        requires_ack=True,
+                    )
+                    self._log(
+                        "PA",
+                        f"[PENDING] approval required for {packet.get('best_agent', '?')}",
+                        "WARN",
+                    )
+                else:
+                    self._pending_approval_packet = {}
+                    self._queue_execution_command(packet, actor="PA")
+            self._cnp_in_progress = False
+
+        elif pa.reasoning_log:
+            self._log("PA", pa.reasoning_log[-1], "INFO")
+
+    def _apply_orchestration_packet(self, packet: Dict[str, Any]) -> None:
+        schedule = packet.get("schedule") if isinstance(packet.get("schedule"), dict) else {}
+        speed = int(schedule.get("target_speed_pct", 100) or 100)
+        for station in self.factory.line:
+            station.set_speed(speed)
+        self.state_store.record_audit(
+            action="orchestration_applied",
+            actor="PA",
+            details={"packet": dict(packet), "target_speed_pct": speed},
+        )
+        self._record_event(
+            event_type="orchestration.applied",
+            source="PA",
+            severity="INFO",
+            payload={"target_speed_pct": speed, "best_agent": packet.get("best_agent", "?")},
+        )
+        self._log("PA", f"[APPLIED] speed {speed}% by {packet.get('best_agent', '?')}", "SUCCESS")
+
+    def _queue_execution_command(self, packet: Dict[str, Any], *, actor: str) -> Dict[str, Any]:
+        command = self.command_queue.enqueue(
+            command_type="apply_orchestration_packet",
+            actor=actor,
+            payload={"packet": dict(packet)},
+        )
+        self.state_store.record_audit(
+            action="execution_queued",
+            actor=actor,
+            details={"command": dict(command)},
+        )
+        self._record_event(
+            event_type="execution.command_queued",
+            source="EXEC",
+            severity="INFO",
+            payload={"command_id": command["command_id"], "actor": actor},
+        )
+        return command
+
+    def _execute_command(self, command: Dict[str, Any]) -> Dict[str, Any]:
+        payload = command.get("payload") if isinstance(command.get("payload"), dict) else {}
+        packet = payload.get("packet") if isinstance(payload.get("packet"), dict) else {}
+
+        if command.get("command_type") == "apply_orchestration_packet":
+            self._apply_orchestration_packet(packet)
+            updated = self.command_queue.mark_status(
+                command["command_id"],
+                "COMPLETED",
+                result={"applied": True, "best_agent": packet.get("best_agent", "")},
+            )
+            self.state_store.record_audit(
+                action="execution_completed",
+                actor="EXEC",
+                details={"command_id": command["command_id"]},
+            )
+            self._record_event(
+                event_type="execution.command_completed",
+                source="EXEC",
+                severity="INFO",
+                payload={"command_id": command["command_id"]},
+            )
+            return updated or command
+
+        updated = self.command_queue.mark_status(
+            command["command_id"],
+            "FAILED",
+            result={"error": "unsupported_command"},
+        )
+        return updated or command
+
+    def _refresh_runtime_state(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        refreshed = dict(snapshot)
+        self.state_store.update_snapshot(refreshed)
+        refreshed["external_inputs"] = self._ingest_external_inputs(refreshed)
+        refreshed["business_events"] = self.event_store.recent(limit=12)
+        return refreshed
+
+    def _ingest_external_inputs(self, snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        now = time.time()
+        if now - self._last_connector_refresh < max(TAKT_SEC, 1.0):
+            return self.state_store.external_context()
+
+        self._last_connector_refresh = now
+        suite = self.connector_suite or {}
+        mode = suite.get("mode", "off")
+        line_id = "L1"
+        lot_ids = snapshot.get("lot_ids")
+        lot_id = "LOT-7"
+        if isinstance(lot_ids, list) and lot_ids:
+            lot_id = str(lot_ids[0])
+
+        payload = {
+            "mes_work_orders": [],
+            "erp_sales_orders": [],
+            "qms_inspections": [],
+        }
+
+        try:
+            if suite.get("mes"):
+                payload["mes_work_orders"] = suite["mes"].fetch_mapped_work_orders(line_id)
+            if suite.get("erp"):
+                payload["erp_sales_orders"] = suite["erp"].fetch_mapped_sales_orders()
+            if suite.get("qms"):
+                payload["qms_inspections"] = suite["qms"].fetch_mapped_inspections(lot_id)
+        except Exception as exc:
+            self._record_event(
+                event_type="connector.ingest_failed",
+                source="INT",
+                severity="WARN",
+                payload={"mode": mode, "error": str(exc)},
+            )
+            return self.state_store.external_context()
+
+        self.state_store.update_external_context(payload)
+        self._record_event(
+            event_type="connector.snapshot_ingested",
+            source="INT",
+            severity="INFO",
+            payload={
+                "mode": mode,
+                "mes_work_orders": len(payload["mes_work_orders"]),
+                "erp_sales_orders": len(payload["erp_sales_orders"]),
+                "qms_inspections": len(payload["qms_inspections"]),
+            },
+        )
+
+        if any(
+            str(row.get("result", "")).upper() == "FAIL"
+            for row in payload["qms_inspections"]
+        ):
+            self._record_event(
+                event_type="quality.external_fail_detected",
+                source="QMS",
+                severity="HIGH",
+                payload={"failed_lots": payload["qms_inspections"]},
+            )
+
+        return payload
+
+    def _record_event(
+        self,
+        *,
+        event_type: str,
+        source: str,
+        severity: str = "INFO",
+        payload: Optional[Dict[str, Any]] = None,
+        requires_ack: bool = False,
+    ) -> Dict[str, Any]:
+        event = self.event_store.append(
+            event_type=event_type,
+            source=source,
+            severity=severity,
+            payload=payload,
+            requires_ack=requires_ack,
+        )
+        return event.to_dict()
+
+    def _recover_from_event_log(self) -> None:
+        replayed = self.event_store.replay(limit=200)
+        if not replayed:
+            self._recovery_state = {"replayed_events": 0, "last_replayed_event_id": ""}
+            return
+
+        last = replayed[-1]
+        last_packet = None
+        pending_packet = None
+        for event in replayed:
+            event_type = str(event.get("event_type") or "")
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            if event_type == "approval.pending":
+                packet = payload.get("packet")
+                if isinstance(packet, dict):
+                    pending_packet = dict(packet)
+                    last_packet = dict(packet)
+            elif event_type in ("approval.approved", "approval.rejected", "orchestration.applied"):
+                pending_packet = None
+            elif event_type == "execution.command_completed":
+                pending_packet = None
+
+        self._last_orchestration_packet = dict(last_packet or self._last_orchestration_packet)
+        self._pending_approval_packet = dict(pending_packet or {})
+        self._recovery_state = {
+            "replayed_events": len(replayed),
+            "last_replayed_event_id": str(last.get("event_id") or ""),
+        }
+
+    def _dispatch_runtime_event(self, event: Dict[str, Any]) -> None:
+        severity = str(event.get("severity", "INFO")).upper()
+        if severity not in ("HIGH", "CRITICAL") and not event.get("requires_ack"):
+            return
+
+        now = time.time()
+        if now - self._last_pa_dispatch_at < max(EVENT_DISPATCH_SEC, 0.5):
+            return
+
+        with self._lock:
+            snap = copy.copy(self._snapshot) if self._snapshot else None
+        if not snap:
+            return
+
+        pa = self.agents.get("PA")
+        if not pa:
+            return
+
+        self._last_pa_dispatch_at = now
+        self.state_store.record_audit(
+            action="event_dispatched",
+            actor="EVENT-DISPATCH",
+            details={"event": dict(event)},
+        )
+        self._log("SYS", f"[EVENT] dispatch {event.get('event_type', '?')} -> PA", "EVENT")
+        self._run_pa_with_orchestration(pa, snap)
+
+    def _should_trigger_pa(self, snapshot: Dict[str, Any]) -> bool:
+        business_events = snapshot.get("business_events")
+        if isinstance(business_events, list):
+            for event in business_events[-3:]:
+                if str(event.get("severity", "INFO")).upper() in ("CRITICAL", "HIGH"):
+                    return True
+        return RUNTIME_MODE != "event"
 
 
 # ── MES 스타일 터미널 디스플레이 ──────────────────────────────────

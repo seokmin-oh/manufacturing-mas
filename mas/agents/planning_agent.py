@@ -45,6 +45,8 @@ class PlanningAgent(BaseAgent):
         if not isinstance(mctx, dict):
             mctx = {}
         kpi_slices = mctx.get("kpi_slices") if isinstance(mctx.get("kpi_slices"), dict) else {}
+        external_inputs = mctx.get("external_inputs") if isinstance(mctx.get("external_inputs"), dict) else {}
+        recent_events = mctx.get("recent_events") if isinstance(mctx.get("recent_events"), list) else []
 
         return {
             "cycle": snapshot.get("cycle", 0),
@@ -56,6 +58,8 @@ class PlanningAgent(BaseAgent):
             "alerts": alerts,
             "stations": snapshot.get("stations", {}),
             "business_events": snapshot.get("business_events") or [],
+            "recent_events": recent_events,
+            "external_inputs": external_inputs,
             "standard_identifiers": mctx.get("identifiers") if isinstance(mctx.get("identifiers"), dict) else {},
             "standard_line_kpi": kpi_slices.get("line") if isinstance(kpi_slices, dict) else {},
             "context_validation": snapshot.get("manufacturing_context_validation") or [],
@@ -65,6 +69,8 @@ class PlanningAgent(BaseAgent):
         alerts = obs.get("alerts", [])
         cycle = obs.get("cycle", 0)
         avg_oee = obs.get("avg_oee", 1.0)
+        recent_events = obs.get("recent_events") or []
+        external_inputs = obs.get("external_inputs") or {}
 
         decision = {
             "type": "planning_assessment",
@@ -77,10 +83,28 @@ class PlanningAgent(BaseAgent):
 
         critical_count = sum(1 for a in alerts if a.get("severity") == "CRITICAL")
         high_count = sum(1 for a in alerts if a.get("severity") == "HIGH")
+        event_risk_count = sum(
+            1
+            for event in recent_events
+            if str(event.get("severity", "INFO")).upper() in ("CRITICAL", "HIGH")
+        )
+        qms_failures = sum(
+            1
+            for row in external_inputs.get("qms_inspections", [])
+            if str(row.get("result", "")).upper() == "FAIL"
+        )
+        erp_urgent_orders = sum(
+            1
+            for row in external_inputs.get("erp_sales_orders", [])
+            if str(row.get("priority", "")).upper() == "URGENT"
+        )
 
         should_cnp = (
             critical_count >= 1
             or high_count >= 2
+            or event_risk_count >= 1
+            or qms_failures >= 1
+            or erp_urgent_orders >= 2
             or (avg_oee < 0.65 and cycle - self._last_cnp_cycle > 30)
         )
 
@@ -91,7 +115,9 @@ class PlanningAgent(BaseAgent):
             decision["cnp_reason"] = self._summarize_alerts(alerts)
             self.log_reasoning(
                 f"[CNP] trigger critical={critical_count} high={high_count} "
-                f"oee={avg_oee:.1%} reason={decision['cnp_reason']}"
+                f"events={event_risk_count} qms_fail={qms_failures} "
+                f"urgent_orders={erp_urgent_orders} oee={avg_oee:.1%} "
+                f"reason={decision['cnp_reason']}"
             )
             return decision
 

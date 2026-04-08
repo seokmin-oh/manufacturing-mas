@@ -128,6 +128,8 @@ class ManufacturingContext:
     kpi_slices: KpiSliceBundle
     plant: PlantRef
     summary: FactorySummary
+    external_inputs: Dict[str, Any] = field(default_factory=dict)
+    recent_events: List[Dict[str, Any]] = field(default_factory=list)
     meta: Dict[str, Any] = field(default_factory=dict)
 
     @property
@@ -173,6 +175,12 @@ class ManufacturingContext:
             },
             "plant": asdict(self.plant),
             "summary": asdict(self.summary),
+            "external_inputs": {
+                "mes_work_orders": list(self.external_inputs.get("mes_work_orders") or []),
+                "erp_sales_orders": list(self.external_inputs.get("erp_sales_orders") or []),
+                "qms_inspections": list(self.external_inputs.get("qms_inspections") or []),
+            },
+            "recent_events": list(self.recent_events),
             "meta": dict(self.meta),
         }
 
@@ -319,6 +327,13 @@ def from_factory_snapshot(
         "plant_schema_version": schema_ver,
     }
 
+    external_inputs = snap.get("external_inputs")
+    if not isinstance(external_inputs, dict):
+        external_inputs = {}
+    recent_events = snap.get("business_events")
+    if not isinstance(recent_events, list):
+        recent_events = []
+
     return ManufacturingContext(
         contract_version=CONTEXT_CONTRACT_VERSION,
         identifiers=identifiers,
@@ -326,6 +341,8 @@ def from_factory_snapshot(
         kpi_slices=kpi_slices,
         plant=plant,
         summary=summary,
+        external_inputs=external_inputs,
+        recent_events=[dict(event) for event in recent_events if isinstance(event, dict)],
         meta=meta,
     )
 
@@ -370,6 +387,14 @@ def validate_context_dict(payload: Dict[str, Any]) -> List[str]:
             if not isinstance(kpi_slices.get(key), dict):
                 errors.append(f"kpi_slices.{key} must be an object")
 
+    external_inputs = payload.get("external_inputs")
+    if external_inputs is not None and not isinstance(external_inputs, dict):
+        errors.append("external_inputs must be an object")
+
+    recent_events = payload.get("recent_events")
+    if recent_events is not None and not isinstance(recent_events, list):
+        errors.append("recent_events must be a list")
+
     return errors
 
 
@@ -399,6 +424,8 @@ def build_agent_context_view(
         focus["line_kpi"] = kpi_slices.get("line") if isinstance(kpi_slices, dict) else {}
         focus["stations"] = by_station
         focus["materials"] = by_sku
+        focus["external_inputs"] = payload.get("external_inputs") if isinstance(payload.get("external_inputs"), dict) else {}
+        focus["recent_events"] = payload.get("recent_events") if isinstance(payload.get("recent_events"), list) else []
 
     view["role_focus"] = focus
     if include_validation:

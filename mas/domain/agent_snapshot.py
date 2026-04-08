@@ -34,4 +34,9 @@ def enrich_snapshot_for_agents(snapshot: Dict[str, Any]) -> Dict[str, Any]:
         out["manufacturing_context"] = {"contract_version": "error", "error": "adapter_failed"}
         out["manufacturing_context_validation"] = ["adapter_failed"]
 
+    if isinstance(snapshot.get("business_events"), list):
+        out["business_events"] = list(snapshot.get("business_events") or [])
+    if isinstance(snapshot.get("external_inputs"), dict):
+        out["external_inputs"] = dict(snapshot.get("external_inputs") or {})
+
     return out
