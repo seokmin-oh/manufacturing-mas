@@ -181,6 +181,22 @@ footer.app-footer a:hover{color:var(--cyan)}
 .ops-strip .sep{opacity:.35;user-select:none}
 .agent-mini{margin-top:6px;font-size:10px;color:var(--dim);line-height:1.4}
 .msg-item.system{background:rgba(49,130,246,.08)}
+.approval-card{background:linear-gradient(180deg,rgba(245,158,11,.08),rgba(24,28,38,.9));border:1px solid rgba(245,158,11,.24);border-radius:14px;padding:16px}
+.approval-card.is-empty{background:var(--card);border-color:var(--border)}
+.approval-head{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap}
+.approval-title{font-size:14px;font-weight:750;color:var(--text)}
+.approval-badge{display:inline-flex;align-items:center;padding:5px 9px;border-radius:999px;font-size:11px;font-weight:750;border:1px solid rgba(245,158,11,.28);background:rgba(245,158,11,.12);color:#fcd34d}
+.approval-meta{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;margin-top:12px}
+@media(max-width:700px){.approval-meta{grid-template-columns:1fr}}
+.approval-kv{font-size:12px;color:var(--sub)}
+.approval-kv b{display:block;color:var(--dim);font-size:10px;text-transform:uppercase;letter-spacing:.05em;margin-bottom:3px}
+.approval-actions{display:flex;gap:10px;flex-wrap:wrap;margin-top:14px}
+.approval-btn{padding:10px 14px;border:none;border-radius:10px;font-size:12px;font-weight:700;cursor:pointer}
+.approval-btn--approve{background:linear-gradient(180deg,var(--green),#059669);color:#fff}
+.approval-btn--reject{background:rgba(239,68,68,.14);border:1px solid rgba(239,68,68,.3);color:#fca5a5}
+.approval-btn:disabled{opacity:.55;cursor:not-allowed}
+.approval-note{margin-top:12px;font-size:11px;color:var(--dim);line-height:1.45}
+.approval-history{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border);font-size:12px;color:var(--sub)}
 
 /* MES 스타일 라인 도식 */
 .mes-banner{background:linear-gradient(145deg,rgba(59,130,246,.06),transparent 50%),var(--surface);border:1px solid var(--border);border-radius:18px;padding:18px 20px;margin-bottom:0;box-shadow:0 2px 20px rgba(0,0,0,.2)}
@@ -261,6 +277,7 @@ footer.app-footer a:hover{color:var(--cyan)}
     <a href="#section-system" class="app-nav__link">시스템</a>
     <a href="#section-chat" class="app-nav__link app-nav__link--accent">질의</a>
   </nav>
+    <a href="#section-approvals" class="app-nav__link">Approval Inbox</a>
   <div class="app-sidebar__foot">
     <a href="/docs" class="app-sidebar__api" target="_blank" rel="noopener">OpenAPI · /docs</a>
   </div>
@@ -346,6 +363,20 @@ footer.app-footer a:hover{color:var(--cyan)}
     <p class="panel-desc">판단 요약 · 서브 뷰</p>
   </div>
   <div class="grid grid-3" id="agents-grid"></div>
+</div>
+</section>
+
+<section id="section-approvals" class="app-section">
+<div class="panel panel--compact">
+  <div class="panel-head" style="margin-bottom:12px">
+    <span class="eyebrow">Approval</span>
+    <h2 class="panel-title" style="font-size:15px">Human-in-the-Loop Inbox</h2>
+    <p class="panel-desc">승인 필요 CNP 결정은 여기서 검토 후 승인/반려합니다.</p>
+  </div>
+  <div id="approval-box" class="approval-card is-empty">
+    <div class="approval-title">대기 중인 승인 요청이 없습니다.</div>
+    <div class="approval-note">승인 필요 전략이 생성되면 자동으로 여기에 표시됩니다.</div>
+  </div>
 </div>
 </section>
 
@@ -569,6 +600,69 @@ function kpiAvgOee(kpi, mon){
   return 0;
 }
 
+async function approvalAction(action){
+  const approver=(window.prompt('승인자 이름을 입력하세요.', 'supervisor')||'').trim();
+  if(!approver)return;
+  const body=action==='approve'
+    ? {approver,note:(window.prompt('승인 메모를 입력하세요.', '')||'').trim()}
+    : {approver,reason:(window.prompt('반려 사유를 입력하세요.', '')||'').trim()};
+  try{
+    const res=await fetch(apiPath(`/api/approvals/${action}`),{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify(body)
+    });
+    const data=await res.json().catch(()=>({}));
+    if(!res.ok){
+      window.alert((data&&data.reason)||'요청 처리에 실패했습니다.');
+      return;
+    }
+    await poll();
+  }catch(err){
+    window.alert('승인 요청 실패: '+err);
+  }
+}
+
+function renderApprovalInbox(coordination){
+  const box=$('approval-box');
+  if(!box)return;
+  const pending=coordination&&coordination.pending_approval_packet||{};
+  const last=coordination&&coordination.last_decision_packet||{};
+  if(!pending||!Object.keys(pending).length){
+    const hist=last&&last.approval&&last.approval.status
+      ? `<div class="approval-history"><b style="color:var(--text)">최근 처리</b><br>${esc(last.best_agent||'-')} / ${esc(last.approval.status||'-')} / ${esc(last.approval.approver||'-')}</div>`
+      : '';
+    box.className='approval-card is-empty';
+    box.innerHTML=`<div class="approval-title">대기 중인 승인 요청이 없습니다.</div>
+      <div class="approval-note">승인 필요 전략이 생성되면 자동으로 여기에 표시됩니다.</div>${hist}`;
+    return;
+  }
+  const sch=pending.schedule||{};
+  box.className='approval-card';
+  box.innerHTML=`<div class="approval-head">
+      <div>
+        <div class="approval-title">${esc(pending.best_agent||'-')} 제안 승인 요청</div>
+        <div class="approval-note">라인 ${esc(pending.context_ref||'-')}에 대한 orchestration packet</div>
+      </div>
+      <span class="approval-badge">승인 대기</span>
+    </div>
+    <div class="approval-meta">
+      <div class="approval-kv"><b>Decision</b>${esc(pending.decision||'-')}</div>
+      <div class="approval-kv"><b>Best Agent</b>${esc(pending.best_agent||'-')}</div>
+      <div class="approval-kv"><b>Target Speed</b>${esc(String(sch.target_speed_pct??'-'))}%</div>
+      <div class="approval-kv"><b>Inspection</b>${esc(sch.inspection_mode||'-')}</div>
+    </div>
+    <div class="approval-actions">
+      <button class="approval-btn approval-btn--approve" id="approval-approve-btn">Approve</button>
+      <button class="approval-btn approval-btn--reject" id="approval-reject-btn">Reject</button>
+    </div>
+    <div class="approval-note">승인 시 설비 속도와 실행 패킷이 즉시 반영됩니다.</div>`;
+  const approveBtn=$('approval-approve-btn');
+  const rejectBtn=$('approval-reject-btn');
+  if(approveBtn) approveBtn.onclick=()=>approvalAction('approve');
+  if(rejectBtn) rejectBtn.onclick=()=>approvalAction('reject');
+}
+
 function renderLineSchematic(factory, mon, kpi){
   const el=$('line-schematic');
   if(!el)return;
@@ -639,12 +733,13 @@ async function poll(){
       errEl.innerHTML='<b>공장 데이터 미연결</b> — <code>python main.py</code>로 실행 중일 때만 대시보드에 스냅샷이 표시됩니다. API만 띄운 상태이면 이 메시지가 나옵니다.';
     }else if(errEl&&st.factory_bound!==false){errEl.style.display='none';}
 
-    const [factory,agents,broker,kpi,mon]=await Promise.all([
+    const [factory,agents,broker,kpi,mon,pendingApproval]=await Promise.all([
       fetchJson('/api/factory'),
       fetchJson('/api/agents'),
       fetchJson('/api/broker'),
       fetchJson('/api/kpi'),
       fetchJson('/api/monitoring'),
+      fetchJson('/api/approvals/pending'),
     ]);
 
     if(factory.detail==='Unauthorized'||mon.detail==='Unauthorized'){
@@ -692,6 +787,9 @@ async function poll(){
 
     renderLineSchematic(factory, mon, kpi);
     renderEaPmSection(mon);
+    const coordination=Object.assign({}, mon.coordination_layer||{});
+    if(pendingApproval&&pendingApproval.pending) coordination.pending_approval_packet=pendingApproval.pending;
+    renderApprovalInbox(coordination);
 
     const rs=mon.router_snapshot||{};
     $('rv-v').textContent=(rs.vibration_mm_s!=null)?Number(rs.vibration_mm_s).toFixed(2):'-';

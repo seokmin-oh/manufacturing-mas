@@ -23,6 +23,7 @@ from mas.agents import (
 from mas.intelligence.llm import LLMClient
 from mas.intelligence.decision_router import HybridDecisionRouter
 from mas.protocol.agent_protocol import run_cycle_with_router
+from mas.runtime.factory_runtime import FactoryRuntime
 
 
 def _make_system():
@@ -174,3 +175,64 @@ class TestE2ERuntime:
             status = agent.get_agent_status()
             for key in ("agent_id", "name", "state", "cycle_count"):
                 assert key in status, f"{agent.agent_id} missing key: {key}"
+
+    def test_runtime_orchestration_pending_approval(self, monkeypatch):
+        factory, broker, agents, router = _make_system()
+        runtime = FactoryRuntime(factory, broker, agents, decision_router=router)
+        pa = [a for a in agents if a.agent_id == "PA"][0]
+
+        factory.run_cycle()
+        snap = factory.get_snapshot()
+
+        def fake_run_cycle_with_router(*args, **kwargs):
+            return {"initiate_cnp": True, "cnp_reason": "quality risk"}
+
+        def fake_initiate_cnp(agent_list, snapshot):
+            return {
+                "decision": "rule_based",
+                "best_agent": "QA",
+                "target_speed_pct": 78,
+                "inspection_mode": "전수",
+                "approval_required": True,
+                "proposals_count": 2,
+            }
+
+        monkeypatch.setattr("mas.runtime.factory_runtime.run_cycle_with_router", fake_run_cycle_with_router)
+        monkeypatch.setattr(pa, "initiate_cnp", fake_initiate_cnp)
+
+        runtime._run_pa_with_orchestration(pa, snap)
+
+        pending = runtime.get_pending_approval_packet()
+        assert pending["requires_approval"] is True
+        assert pending["schedule"]["target_speed_pct"] == 78
+
+    def test_runtime_orchestration_auto_apply(self, monkeypatch):
+        factory, broker, agents, router = _make_system()
+        runtime = FactoryRuntime(factory, broker, agents, decision_router=router)
+        pa = [a for a in agents if a.agent_id == "PA"][0]
+
+        factory.run_cycle()
+        snap = factory.get_snapshot()
+
+        def fake_run_cycle_with_router(*args, **kwargs):
+            return {"initiate_cnp": True, "cnp_reason": "throughput optimization"}
+
+        def fake_initiate_cnp(agent_list, snapshot):
+            return {
+                "decision": "rule_based",
+                "best_agent": "EA",
+                "target_speed_pct": 90,
+                "inspection_mode": "standard",
+                "approval_required": False,
+                "proposals_count": 2,
+            }
+
+        monkeypatch.setattr("mas.runtime.factory_runtime.run_cycle_with_router", fake_run_cycle_with_router)
+        monkeypatch.setattr(pa, "initiate_cnp", fake_initiate_cnp)
+
+        runtime._run_pa_with_orchestration(pa, snap)
+
+        assert runtime.get_pending_approval_packet() == {}
+        packet = runtime.get_last_orchestration_packet()
+        assert packet["schedule"]["target_speed_pct"] == 90
+        assert all(station.speed_pct == 90 for station in factory.line)

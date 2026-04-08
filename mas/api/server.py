@@ -194,6 +194,43 @@ class MASApiServer:
         async def get_monitoring():
             return JSONResponse(server._build_monitoring_payload())
 
+        @self.app.get("/api/approvals/pending")
+        async def get_pending_approval():
+            rt = server._runtime
+            if not rt or not getattr(rt, "get_pending_approval_packet", None):
+                return JSONResponse({"pending": {}})
+            return JSONResponse({"pending": rt.get_pending_approval_packet()})
+
+        @self.app.post("/api/approvals/approve")
+        async def post_approve(request: Request):
+            rt = server._runtime
+            if not rt or not getattr(rt, "approve_pending_packet", None):
+                return JSONResponse({"approved": False, "reason": "runtime_unavailable"}, status_code=400)
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            approver = str((body or {}).get("approver", "")).strip() or "supervisor"
+            note = str((body or {}).get("note", "")).strip()
+            result = rt.approve_pending_packet(approver=approver, note=note)
+            status = 200 if result.get("approved") else 409
+            return JSONResponse(result, status_code=status)
+
+        @self.app.post("/api/approvals/reject")
+        async def post_reject(request: Request):
+            rt = server._runtime
+            if not rt or not getattr(rt, "reject_pending_packet", None):
+                return JSONResponse({"rejected": False, "reason": "runtime_unavailable"}, status_code=400)
+            try:
+                body = await request.json()
+            except Exception:
+                body = {}
+            approver = str((body or {}).get("approver", "")).strip() or "supervisor"
+            reason = str((body or {}).get("reason", "")).strip()
+            result = rt.reject_pending_packet(approver=approver, reason=reason)
+            status = 200 if result.get("rejected") else 409
+            return JSONResponse(result, status_code=status)
+
         @self.app.post("/api/ask")
         async def post_ask(request: Request):
             """자연어 질문 → 현재 모니터링 스냅샷 기준 답변(LLM 또는 규칙)."""
@@ -308,6 +345,7 @@ class MASApiServer:
         from ..intelligence.equipment_predictive_models import model_catalog as pm_model_catalog
         from ..intelligence.snapshot_enrichment import enrich_snapshot_for_router
         from ..domain.manufacturing_context import from_factory_snapshot, validate_context_dict
+        from ..integration import build_connector_status
 
         settings = get_settings()
         control_matrix = build_control_payload(settings)
@@ -428,6 +466,15 @@ class MASApiServer:
             "broker": self._broker.get_status() if self._broker else {},
             "llm": self._llm.get_status() if self._llm else {"enabled": False},
             "decision_router": dr_status,
+            "external_connectors": build_connector_status(settings),
+            "coordination_layer": (
+                rt.get_coordination_status()
+                if rt and getattr(rt, "get_coordination_status", None)
+                else {
+                    "last_decision_packet": {},
+                    "pending_approval_packet": {},
+                }
+            ),
             "runtime": {
                 "uptime_sec": round(rt.uptime, 1) if rt else 0,
                 "total_events": rt.total_events if rt else 0,

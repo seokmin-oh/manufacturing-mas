@@ -31,8 +31,8 @@ def test_monitoring_payload_schema_smoke():
         InventoryAgent(),
         PlanningAgent(llm_client=llm),
     ]
-    for a in agents:
-        a.broker = broker
+    for agent in agents:
+        agent.broker = broker
 
     api = MASApiServer(port=8787)
     api.bind(
@@ -57,6 +57,8 @@ def test_monitoring_payload_schema_smoke():
         "broker",
         "llm",
         "decision_router",
+        "external_connectors",
+        "coordination_layer",
         "runtime",
     }
     assert required_top_keys.issubset(payload.keys())
@@ -77,5 +79,13 @@ def test_monitoring_payload_schema_smoke():
     assert isinstance(agents_out, dict)
     assert {"EA", "QA", "SA", "DA", "IA", "PA"}.issubset(agents_out.keys())
 
-    # JSONResponse 직렬화 가능 여부 스모크: NaN/Inf 유입 방지
+    connectors = payload["external_connectors"]
+    assert connectors["mode"] in {"off", "sample", "file", "rest"}
+    assert {"mes", "erp", "qms"}.issubset(connectors.keys())
+
+    coordination = payload["coordination_layer"]
+    assert isinstance(coordination, dict)
+    assert "last_decision_packet" in coordination
+    assert "pending_approval_packet" in coordination
+
     json.dumps(payload, allow_nan=False)

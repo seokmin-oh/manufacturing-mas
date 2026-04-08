@@ -25,7 +25,7 @@ import logging
 import random
 import threading
 import time
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 _log = logging.getLogger(__name__)
 
@@ -40,6 +40,7 @@ from ..core.logger import C
 from ..core.config import get_settings
 from ..protocol.agent_protocol import run_cycle_with_router
 from ..core.manufacturing_ids import AGENT_IDS
+from ..coordination import CellCoordinator, LineScheduler, PlantOrchestrator
 
 TAKT_SEC = get_settings().takt_sec
 AGENT_INTERVALS = {"EA": 2, "QA": 3, "SA": 5, "DA": 4, "IA": 3, "PA": 2}
@@ -79,6 +80,13 @@ class FactoryRuntime:
         self.mqtt = mqtt
         self.api = api
         self.decision_router = decision_router
+        self.line_scheduler = LineScheduler(line_id="LINE-BRAKE-01")
+        self.cell_coordinator = CellCoordinator(cell_id="CELL-LINE-01")
+        self.plant_orchestrator = PlantOrchestrator(
+            plant_id="PLANT-BRAKE-MAIN",
+            line_scheduler=self.line_scheduler,
+            cell_coordinator=self.cell_coordinator,
+        )
 
         self._running = False
         self._lock = threading.Lock()
@@ -92,6 +100,8 @@ class FactoryRuntime:
         self._cnp_in_progress = False
         self.start_time = 0.0
         self._last_monitor_push = 0.0
+        self._last_orchestration_packet: Dict[str, Any] = {}
+        self._pending_approval_packet: Dict[str, Any] = {}
 
     @property
     def uptime(self) -> float:
@@ -125,6 +135,70 @@ class FactoryRuntime:
             logs = list(self._log_buffer)
             self._log_buffer.clear()
         return logs
+
+    def get_coordination_status(self) -> Dict[str, Any]:
+        with self._lock:
+            snapshot = copy.copy(self._snapshot) if self._snapshot else None
+        if not snapshot:
+            return {}
+        mctx = enrich_snapshot_for_agents(dict(snapshot)).get("manufacturing_context") or {}
+        agent_statuses = {
+            aid: agent.get_agent_status()
+            for aid, agent in self.agents.items()
+        }
+        coordination = self.plant_orchestrator.build_coordination_snapshot(
+            mctx,
+            agent_statuses=agent_statuses,
+        )
+        coordination["last_decision_packet"] = dict(self._last_orchestration_packet)
+        coordination["pending_approval_packet"] = dict(self._pending_approval_packet)
+        return coordination
+
+    def get_last_orchestration_packet(self) -> Dict[str, Any]:
+        return dict(self._last_orchestration_packet)
+
+    def get_pending_approval_packet(self) -> Dict[str, Any]:
+        return dict(self._pending_approval_packet)
+
+    def approve_pending_packet(
+        self,
+        *,
+        approver: str,
+        note: str = "",
+    ) -> Dict[str, Any]:
+        if not self._pending_approval_packet:
+            return {"approved": False, "reason": "no_pending_packet"}
+        packet = dict(self._pending_approval_packet)
+        packet["approval"] = {
+            "status": "APPROVED",
+            "approver": approver,
+            "note": note,
+            "approved_at": time.time(),
+        }
+        self._pending_approval_packet = {}
+        self._last_orchestration_packet = dict(packet)
+        self._apply_orchestration_packet(packet)
+        return {"approved": True, "packet": packet}
+
+    def reject_pending_packet(
+        self,
+        *,
+        approver: str,
+        reason: str = "",
+    ) -> Dict[str, Any]:
+        if not self._pending_approval_packet:
+            return {"rejected": False, "reason": "no_pending_packet"}
+        packet = dict(self._pending_approval_packet)
+        packet["approval"] = {
+            "status": "REJECTED",
+            "approver": approver,
+            "reason": reason,
+            "rejected_at": time.time(),
+        }
+        self._pending_approval_packet = {}
+        self._last_orchestration_packet = dict(packet)
+        self._log("PA", f"[REJECTED] by {approver}: {reason or 'no reason'}", "WARN")
+        return {"rejected": True, "packet": packet}
 
     # ── 환경 루프 ──────────────────────────────────────────
 
@@ -293,7 +367,7 @@ class FactoryRuntime:
 
             try:
                 if agent_id == "PA":
-                    self._run_pa(agent, snap)
+                    self._run_pa_with_orchestration(agent, snap)
                 else:
                     decision = run_cycle_with_router(
                         agent, snap,
@@ -352,6 +426,52 @@ class FactoryRuntime:
         else:
             if pa.reasoning_log:
                 self._log("PA", pa.reasoning_log[-1], "INFO")
+
+    def _run_pa_with_orchestration(self, pa: PlanningAgent, snap: Dict):
+        """New PA path that emits orchestration packets and enforces approval gating."""
+        decision = run_cycle_with_router(
+            pa, snap,
+            decision_router=self.decision_router,
+            log_fn=self._log,
+            broker=self.broker,
+        )
+
+        if decision and decision.get("initiate_cnp") and not self._cnp_in_progress:
+            self._cnp_in_progress = True
+            self._log("PA", f"CNP #{pa.cnp_count + 1} start: {decision.get('cnp_reason', '')}", "CNP")
+
+            agents_list = [a for a in self.agents.values() if a.agent_id != "PA"]
+            enriched_snapshot = enrich_snapshot_for_agents(dict(snap))
+            strategy = pa.initiate_cnp(agents_list, enriched_snapshot)
+
+            if strategy:
+                self.cnp_count = pa.cnp_count
+                packet = self.plant_orchestrator.issue_decision_packet(
+                    strategy,
+                    manufacturing_context=enriched_snapshot.get("manufacturing_context") or {},
+                )
+                self._last_orchestration_packet = dict(packet)
+                if packet.get("requires_approval"):
+                    self._pending_approval_packet = dict(packet)
+                    self._log(
+                        "PA",
+                        f"[PENDING] approval required for {packet.get('best_agent', '?')}",
+                        "WARN",
+                    )
+                else:
+                    self._pending_approval_packet = {}
+                    self._apply_orchestration_packet(packet)
+            self._cnp_in_progress = False
+
+        elif pa.reasoning_log:
+            self._log("PA", pa.reasoning_log[-1], "INFO")
+
+    def _apply_orchestration_packet(self, packet: Dict[str, Any]) -> None:
+        schedule = packet.get("schedule") if isinstance(packet.get("schedule"), dict) else {}
+        speed = int(schedule.get("target_speed_pct", 100) or 100)
+        for station in self.factory.line:
+            station.set_speed(speed)
+        self._log("PA", f"[APPLIED] speed {speed}% by {packet.get('best_agent', '?')}", "SUCCESS")
 
 
 # ── MES 스타일 터미널 디스플레이 ──────────────────────────────────
