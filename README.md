@@ -189,6 +189,7 @@ Multi-Agent/
 | `CURRENT_SYSTEM_GUIDE.md` | 현행 시스템 가이드 |
 | `MAS_SYSTEM_REFERENCE.md` | 시스템 레퍼런스 |
 | `AI_MODELS_AND_AGENTS.md` | AI 모델·에이전트 설명 |
+| `ROADMAP_ADVANCED_MAS.md` | 고도화 로드맵(9대 축) 및 구현 현황 |
 
 ## 라이선스
 
